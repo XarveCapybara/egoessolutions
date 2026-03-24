@@ -17,6 +17,45 @@ if ($officeId) {
     $stmt = $pdo->prepare('SELECT COUNT(*) FROM users WHERE role = "employee" AND office_id = ?');
     $stmt->execute([$officeId]);
     $totalEmployees = (int) $stmt->fetchColumn();
+
+    $hasAttendanceLogs = $pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount() > 0;
+    if ($hasAttendanceLogs) {
+        $presentStmt = $pdo->prepare('
+            SELECT COUNT(DISTINCT employee_id)
+            FROM attendance_logs
+            WHERE office_id = ? AND log_date = CURDATE() AND time_in IS NOT NULL
+        ');
+        $presentStmt->execute([$officeId]);
+        $todayPresent = (int) $presentStmt->fetchColumn();
+
+        $scansStmt = $pdo->prepare('
+            SELECT COUNT(*)
+            FROM attendance_logs
+            WHERE office_id = ? AND log_date = CURDATE()
+        ');
+        $scansStmt->execute([$officeId]);
+        $scansToday = (int) $scansStmt->fetchColumn();
+
+        $lateStmt = $pdo->prepare('
+            SELECT COUNT(*)
+            FROM attendance_logs
+            WHERE office_id = ? AND log_date = CURDATE() AND time_in IS NOT NULL AND TIME(time_in) > "09:00:00"
+        ');
+        $lateStmt->execute([$officeId]);
+        $lateArrivals = (int) $lateStmt->fetchColumn();
+
+        $recentStmt = $pdo->prepare('
+            SELECT u.full_name, al.log_date, al.time_in, al.time_out, al.status
+            FROM attendance_logs al
+            INNER JOIN employees e ON al.employee_id = e.id
+            INNER JOIN users u ON e.user_id = u.id
+            WHERE al.office_id = ?
+            ORDER BY al.log_date DESC, al.time_in DESC, al.id DESC
+            LIMIT 10
+        ');
+        $recentStmt->execute([$officeId]);
+        $recentLogs = $recentStmt->fetchAll();
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -52,30 +91,7 @@ if ($officeId) {
 
     <div class="container-fluid">
       <div class="row">
-        <!-- Sidebar -->
-        <aside class="col-12 col-md-3 col-lg-2 eg-sidebar eg-sidebar-admin py-4">
-          <div class="eg-sidebar-brand px-3 mb-3">
-            <span class="eg-sidebar-role">Office Admin</span>
-          </div>
-          <nav class="nav flex-column gap-1">
-            <a href="dashboard.php" class="eg-sidebar-link active">
-              <i class="bi bi-speedometer2"></i>
-              <span>Dashboard</span>
-            </a>
-            <a href="scan.php" class="eg-sidebar-link">
-              <i class="bi bi-upc-scan"></i>
-              <span>Scanning</span>
-            </a>
-            <a href="employees.php" class="eg-sidebar-link">
-              <i class="bi bi-people"></i>
-              <span>Employees</span>
-            </a>
-            <a href="../auth/logout.php" class="eg-sidebar-link eg-sidebar-link-danger mt-3">
-              <i class="bi bi-box-arrow-right"></i>
-              <span>Logout</span>
-            </a>
-          </nav>
-        </aside>
+        <?php include __DIR__ . '/../includes/sidebar_admin.php'; ?>
 
         <!-- Main Content -->
         <main class="col-12 col-md-9 col-lg-10 py-4">
@@ -116,7 +132,34 @@ if ($officeId) {
               <h5 class="mb-0">Recent Scanning Activity</h5>
               <a href="scan.php" class="small text-decoration-none">Open scanner</a>
             </div>
-            <p class="text-muted small mb-0">Attendance data will appear here once loaded from the database.</p>
+            <?php if (empty($recentLogs)): ?>
+              <p class="text-muted small mb-0">No attendance logs found yet for this office.</p>
+            <?php else: ?>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th>Employee</th>
+                      <th>Date</th>
+                      <th>Time In</th>
+                      <th>Time Out</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <?php foreach ($recentLogs as $log): ?>
+                      <tr>
+                        <td><?= htmlspecialchars($log['full_name']) ?></td>
+                        <td><?= htmlspecialchars(date('M d, Y', strtotime($log['log_date']))) ?></td>
+                        <td><?= $log['time_in'] ? htmlspecialchars(date('h:i A', strtotime($log['time_in']))) : '—' ?></td>
+                        <td><?= $log['time_out'] ? htmlspecialchars(date('h:i A', strtotime($log['time_out']))) : '—' ?></td>
+                        <td><?= htmlspecialchars($log['status'] ?? 'Present') ?></td>
+                      </tr>
+                    <?php endforeach; ?>
+                  </tbody>
+                </table>
+              </div>
+            <?php endif; ?>
           </div>
         </main>
       </div>

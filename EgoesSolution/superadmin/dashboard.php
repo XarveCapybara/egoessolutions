@@ -45,41 +45,7 @@ if ($pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount()) {
 
     <div class="container-fluid">
       <div class="row">
-        <aside class="col-12 col-md-3 col-lg-2 eg-sidebar eg-sidebar-superadmin py-4">
-          <div class="eg-sidebar-brand px-3 mb-3">
-            <span class="eg-sidebar-role">Superadmin</span>
-          </div>
-          <nav class="nav flex-column gap-1">
-            <a href="dashboard.php" class="eg-sidebar-link active">
-              <i class="bi bi-speedometer2"></i>
-              <span>Dashboard</span>
-            </a>
-            <a href="offices.php" class="eg-sidebar-link">
-              <i class="bi bi-building"></i>
-              <span>Offices</span>
-            </a>
-            <a href="employees.php" class="eg-sidebar-link">
-              <i class="bi bi-people"></i>
-              <span>Employees</span>
-            </a>
-            <a href="payroll.php" class="eg-sidebar-link">
-              <i class="bi bi-currency-dollar"></i>
-              <span>Payroll</span>
-            </a>
-            <a href="barcodes.php" class="eg-sidebar-link">
-              <i class="bi bi-upc-scan"></i>
-              <span>Employee Barcodes</span>
-            </a>
-            <a href="attendance.php" class="eg-sidebar-link">
-              <i class="bi bi-calendar-check"></i>
-              <span>Office Attendance</span>
-            </a>
-            <a href="../auth/logout.php" class="eg-sidebar-link eg-sidebar-link-danger mt-3">
-              <i class="bi bi-box-arrow-right"></i>
-              <span>Logout</span>
-            </a>
-          </nav>
-        </aside>
+        <?php include __DIR__ . '/../includes/sidebar_superadmin.php'; ?>
 
         <main class="col-12 col-md-9 col-lg-10 py-4">
           <h3 class="fw-bold">Super Admin Dashboard</h3>

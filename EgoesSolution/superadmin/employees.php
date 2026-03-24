@@ -7,7 +7,15 @@ if (($_SESSION['role'] ?? '') !== 'superadmin') {
 $name = $_SESSION['display_name'] ?? 'Super Admin';
 
 require_once __DIR__ . '/../config/database.php';
-$stmt = $pdo->query('SELECT id, full_name, email FROM users WHERE role = "employee" ORDER BY full_name');
+$hasPositionCol = $pdo->query("SHOW COLUMNS FROM employees LIKE 'position'")->rowCount() > 0;
+$positionSelect = $hasPositionCol ? ', e.position' : '';
+$stmt = $pdo->query("
+    SELECT u.id, u.full_name, u.email, u.role{$positionSelect}
+    FROM users u
+    LEFT JOIN employees e ON e.user_id = u.id
+    WHERE u.role IN ('employee', 'admin')
+    ORDER BY u.full_name
+");
 $employees = $stmt->fetchAll();
 $offices = $pdo->query('SELECT id, name FROM offices ORDER BY name')->fetchAll();
 $selectedOfficeId = (int) ($_GET['office_id'] ?? 0);
@@ -21,6 +29,9 @@ foreach ($offices as $office) {
 $employeeCreateStatus = $_SESSION['employee_create_status'] ?? null;
 $employeeCreateMessage = $_SESSION['employee_create_message'] ?? null;
 unset($_SESSION['employee_create_status'], $_SESSION['employee_create_message']);
+$teamLeaderCreateStatus = $_SESSION['team_leader_create_status'] ?? null;
+$teamLeaderCreateMessage = $_SESSION['team_leader_create_message'] ?? null;
+unset($_SESSION['team_leader_create_status'], $_SESSION['team_leader_create_message']);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -55,41 +66,7 @@ unset($_SESSION['employee_create_status'], $_SESSION['employee_create_message'])
 
     <div class="container-fluid">
       <div class="row">
-        <aside class="col-12 col-md-3 col-lg-2 eg-sidebar eg-sidebar-superadmin py-4">
-          <div class="eg-sidebar-brand px-3 mb-3">
-            <span class="eg-sidebar-role">Superadmin</span>
-          </div>
-          <nav class="nav flex-column gap-1">
-            <a href="dashboard.php" class="eg-sidebar-link">
-              <i class="bi bi-speedometer2"></i>
-              <span>Dashboard</span>
-            </a>
-            <a href="offices.php" class="eg-sidebar-link">
-              <i class="bi bi-building"></i>
-              <span>Offices</span>
-            </a>
-            <a href="employees.php" class="eg-sidebar-link active">
-              <i class="bi bi-people"></i>
-              <span>Employees</span>
-            </a>
-            <a href="payroll.php" class="eg-sidebar-link">
-              <i class="bi bi-currency-dollar"></i>
-              <span>Payroll</span>
-            </a>
-            <a href="barcodes.php" class="eg-sidebar-link">
-              <i class="bi bi-upc-scan"></i>
-              <span>Employee Barcodes</span>
-            </a>
-            <a href="attendance.php" class="eg-sidebar-link">
-              <i class="bi bi-calendar-check"></i>
-              <span>Office Attendance</span>
-            </a>
-            <a href="../auth/logout.php" class="eg-sidebar-link eg-sidebar-link-danger mt-3">
-              <i class="bi bi-box-arrow-right"></i>
-              <span>Logout</span>
-            </a>
-          </nav>
-        </aside>
+        <?php include __DIR__ . '/../includes/sidebar_superadmin.php'; ?>
 
         <main class="col-12 col-md-9 col-lg-10 py-4">
           <h3 class="mb-3 fw-bold">Employees</h3>
@@ -99,46 +76,96 @@ unset($_SESSION['employee_create_status'], $_SESSION['employee_create_message'])
               <?= htmlspecialchars($employeeCreateMessage) ?>
             </div>
           <?php endif; ?>
+          <?php if (!empty($teamLeaderCreateMessage)): ?>
+            <div class="alert <?= $teamLeaderCreateStatus === 'success' ? 'alert-success' : 'alert-danger' ?> py-2">
+              <?= htmlspecialchars($teamLeaderCreateMessage) ?>
+            </div>
+          <?php endif; ?>
           <div class="eg-panel p-3 mb-4">
-            <h5 class="mb-3">Create Employee Account</h5>
-            <p class="text-muted small mb-3">Only SuperAdmin can create accounts.</p>
-            <form action="createemployee.php" method="post" class="row g-3">
-              <input type="hidden" name="office_id" value="<?= (int) $selectedOfficeId ?>" />
-              <div class="col-md-4">
-                <input class="form-control" name="full_name" placeholder="Full Name" required />
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+              <h5 class="mb-0">Create Account</h5>
+              <div class="btn-group" role="group" aria-label="Create account type">
+                <button type="button" class="btn btn-outline-primary active" id="showEmployeeForm">Employee</button>
+                <button type="button" class="btn btn-outline-primary" id="showTeamLeaderForm">Team Leader</button>
               </div>
-              <div class="col-md-3">
-                <input type="email" class="form-control" name="email" placeholder="Email" required />
-              </div>
-              <div class="col-md-3">
-                <input type="password" class="form-control" name="password" placeholder="Password" required minlength="8" />
-              </div>
-              <div class="col-md-2 d-grid">
-                <button type="submit" class="btn btn-primary">Create Employee</button>
-              </div>
-              <div class="col-12">
-                <?php if ($selectedOfficeName !== null): ?>
-                  <div class="text-muted small">Assigning to office: <strong><?= htmlspecialchars($selectedOfficeName) ?></strong></div>
-                <?php else: ?>
-                  <div class="text-muted small">Tip: open this page from an office overview to auto-assign office.</div>
-                <?php endif; ?>
-              </div>
-            </form>
+            </div>
+
+            <div id="employeeFormPanel">
+              <p class="text-muted small mb-3">Only SuperAdmin can create employee accounts.</p>
+              <form action="createemployee.php" method="post" class="row g-3">
+                <input type="hidden" name="office_id" value="<?= (int) $selectedOfficeId ?>" />
+                <div class="col-md-4">
+                  <input class="form-control" name="full_name" placeholder="Full Name" required />
+                </div>
+                <div class="col-md-3">
+                  <input type="email" class="form-control" name="email" placeholder="Email" required />
+                </div>
+                <div class="col-md-3">
+                  <input type="password" class="form-control" name="password" placeholder="Password" required minlength="8" />
+                </div>
+                <div class="col-md-2 d-grid">
+                  <button type="submit" class="btn btn-primary">Create Employee</button>
+                </div>
+                <div class="col-12">
+                  <?php if ($selectedOfficeName !== null): ?>
+                    <div class="text-muted small">Assigning to office: <strong><?= htmlspecialchars($selectedOfficeName) ?></strong></div>
+                  <?php else: ?>
+                    <div class="text-muted small">Tip: open this page from an office overview to auto-assign office.</div>
+                  <?php endif; ?>
+                </div>
+              </form>
+            </div>
+
+            <div id="teamLeaderFormPanel" class="d-none">
+              <p class="text-muted small mb-3">Creates a team leader login with account type <strong>admin</strong>.</p>
+              <form action="createteamleader.php" method="post" class="row g-3">
+                <input type="hidden" name="office_id" value="<?= (int) $selectedOfficeId ?>" />
+                <div class="col-md-4">
+                  <input class="form-control" name="full_name" placeholder="Full Name" required />
+                </div>
+                <div class="col-md-3">
+                  <input type="email" class="form-control" name="email" placeholder="Email" required />
+                </div>
+                <div class="col-md-3">
+                  <input type="password" class="form-control" name="password" placeholder="Password" required minlength="8" />
+                </div>
+                <div class="col-md-2 d-grid">
+                  <button type="submit" class="btn btn-primary">Create Team Leader</button>
+                </div>
+                <div class="col-12">
+                  <?php if ($selectedOfficeName !== null): ?>
+                    <div class="text-muted small">Assigning to office: <strong><?= htmlspecialchars($selectedOfficeName) ?></strong></div>
+                  <?php else: ?>
+                    <div class="text-muted small">Tip: open this page from an office overview to auto-assign office.</div>
+                  <?php endif; ?>
+                </div>
+              </form>
+            </div>
           </div>
           <div class="row g-3">
             <?php if (empty($employees)): ?>
               <div class="col-12">
-                <p class="text-muted">No Employees yet. Create one above when form is wired to database.</p>
+                <p class="text-muted">No employees or team leaders yet. Create one above.</p>
               </div>
             <?php else: ?>
               <?php foreach ($employees as $emp): ?>
+                <?php
+                $roleLabel = (($emp['role'] ?? '') === 'admin') ? 'Team leader' : 'Employee';
+                $positionText = ($hasPositionCol && !empty(trim((string) ($emp['position'] ?? '')))) ? trim($emp['position']) : '';
+                ?>
                 <div class="col-6 col-md-4 col-lg-3">
                   <div class="eg-employee-card">
                     <div class="d-flex align-items-center mb-2">
                       <div class="eg-avatar-circle me-2"></div>
-                      <div>
+                      <div class="flex-grow-1 min-w-0">
                         <div class="fw-semibold"><?= htmlspecialchars($emp['full_name']) ?></div>
                         <div class="text-muted small"><?= htmlspecialchars($emp['email']) ?></div>
+                        <div class="mt-1">
+                          <span class="badge bg-secondary bg-opacity-25 text-dark small"><?= htmlspecialchars($roleLabel) ?></span>
+                          <?php if ($positionText !== ''): ?>
+                            <span class="text-muted small ms-1"><?= htmlspecialchars($positionText) ?></span>
+                          <?php endif; ?>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -155,5 +182,25 @@ unset($_SESSION['employee_create_status'], $_SESSION['employee_create_message'])
       integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
       crossorigin="anonymous"
     ></script>
+    <script>
+      const employeeBtn = document.getElementById('showEmployeeForm');
+      const teamLeaderBtn = document.getElementById('showTeamLeaderForm');
+      const employeePanel = document.getElementById('employeeFormPanel');
+      const teamLeaderPanel = document.getElementById('teamLeaderFormPanel');
+
+      employeeBtn.addEventListener('click', function () {
+        employeeBtn.classList.add('active');
+        teamLeaderBtn.classList.remove('active');
+        employeePanel.classList.remove('d-none');
+        teamLeaderPanel.classList.add('d-none');
+      });
+
+      teamLeaderBtn.addEventListener('click', function () {
+        teamLeaderBtn.classList.add('active');
+        employeeBtn.classList.remove('active');
+        teamLeaderPanel.classList.remove('d-none');
+        employeePanel.classList.add('d-none');
+      });
+    </script>
   </body>
 </html>

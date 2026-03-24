@@ -5,6 +5,8 @@ if (($_SESSION['role'] ?? '') !== 'employee') {
     exit;
 }
 
+require_once __DIR__ . '/../config/database.php';
+
 $fullName = $_SESSION['display_name'] ?? 'Employee';
 $parts = explode(' ', $fullName, 2);
 
@@ -79,6 +81,14 @@ if (isset($_GET['saved'])) {
 $profile = $_SESSION['employee_profile'];
 $name = $_SESSION['display_name'] ?? 'Employee';
 $avatarUrl = $profile['avatar'] ?? null;
+$employeeCode = '';
+
+$userId = (int) ($_SESSION['user_id'] ?? 0);
+if ($userId > 0) {
+    $employeeCodeStmt = $pdo->prepare('SELECT employee_code FROM employees WHERE user_id = ? LIMIT 1');
+    $employeeCodeStmt->execute([$userId]);
+    $employeeCode = (string) ($employeeCodeStmt->fetchColumn() ?: '');
+}
 
 $showName = $profile['nickname'] !== '' ? $profile['nickname'] : $profile['first_name'];
 $fullDisplayName = trim($profile['first_name'] . ' ' . ($profile['last_name'] ?? ''));
@@ -238,6 +248,19 @@ function eg_disp(?string $s): string
                 <dd><?= htmlspecialchars(eg_disp($profile['email'] ?? '')) ?></dd>
               </div>
             </dl>
+            <hr class="eg-profile-ref-divider" />
+            <h2 class="eg-profile-ref-section-title">Employee Barcode</h2>
+            <?php if ($employeeCode !== ''): ?>
+              <div class="mb-2 text-muted small">Employee Code: <strong><?= htmlspecialchars($employeeCode) ?></strong></div>
+              <div class="bg-white p-3 border rounded mb-2 d-inline-block">
+                <svg id="employeeBarcode"></svg>
+              </div>
+              <div>
+                <button type="button" id="downloadBarcodeBtn" class="eg-profile-ref-btn eg-profile-ref-btn--primary">Download Barcode</button>
+              </div>
+            <?php else: ?>
+              <p class="text-muted mb-2">No employee code found yet.</p>
+            <?php endif; ?>
             <p class="eg-profile-ref-hint mb-0">
               <a href="profile.php?edit=1#edit-profile" class="eg-profile-ref-link">Edit personal details</a>
             </p>
@@ -245,10 +268,71 @@ function eg_disp(?string $s): string
         </div>
       </div>
     </div>
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
     <script
       src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
       integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
       crossorigin="anonymous"
     ></script>
+    <?php if ($employeeCode !== ''): ?>
+      <script>
+        (function () {
+          const code = <?= json_encode($employeeCode) ?>;
+          const barcodeSvg = document.getElementById('employeeBarcode');
+          const downloadBtn = document.getElementById('downloadBarcodeBtn');
+          if (!barcodeSvg || !downloadBtn) return;
+
+          JsBarcode(barcodeSvg, code, {
+            format: 'CODE128',
+            width: 2,
+            height: 80,
+            displayValue: true,
+            margin: 8
+          });
+
+          downloadBtn.addEventListener('click', function () {
+            const serializer = new XMLSerializer();
+            const svgData = serializer.serializeToString(barcodeSvg);
+            const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+            const svgUrl = URL.createObjectURL(svgBlob);
+            const img = new Image();
+
+            img.onload = function () {
+              const canvas = document.createElement('canvas');
+              const svgRect = barcodeSvg.getBoundingClientRect();
+              const width = Math.max(1, Math.round(svgRect.width || 400));
+              const height = Math.max(1, Math.round(svgRect.height || 140));
+              canvas.width = width;
+              canvas.height = height;
+
+              const ctx = canvas.getContext('2d');
+              if (!ctx) {
+                URL.revokeObjectURL(svgUrl);
+                return;
+              }
+
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect(0, 0, width, height);
+              ctx.drawImage(img, 0, 0, width, height);
+
+              const pngUrl = canvas.toDataURL('image/png');
+              const link = document.createElement('a');
+              link.href = pngUrl;
+              link.download = code + '-barcode.png';
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+              URL.revokeObjectURL(svgUrl);
+            };
+
+            img.onerror = function () {
+              URL.revokeObjectURL(svgUrl);
+            };
+
+            img.src = svgUrl;
+          });
+        })();
+      </script>
+    <?php endif; ?>
   </body>
 </html>

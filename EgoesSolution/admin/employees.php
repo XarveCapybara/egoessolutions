@@ -9,8 +9,17 @@ $officeId = $_SESSION['office_id'] ?? null;
 
 require_once __DIR__ . '/../config/database.php';
 $employees = [];
+$hasPositionCol = false;
 if ($officeId) {
-    $stmt = $pdo->prepare('SELECT id, full_name, email FROM users WHERE role = "employee" AND office_id = ? ORDER BY full_name');
+    $hasPositionCol = $pdo->query("SHOW COLUMNS FROM employees LIKE 'position'")->rowCount() > 0;
+    $positionSelect = $hasPositionCol ? ', e.position' : '';
+    $stmt = $pdo->prepare("
+        SELECT u.id, u.full_name, u.email, u.role{$positionSelect}
+        FROM users u
+        LEFT JOIN employees e ON e.user_id = u.id
+        WHERE u.office_id = ? AND u.role IN ('employee', 'admin')
+        ORDER BY u.full_name
+    ");
     $stmt->execute([$officeId]);
     $employees = $stmt->fetchAll();
 }
@@ -48,33 +57,11 @@ if ($officeId) {
 
     <div class="container-fluid">
       <div class="row">
-        <aside class="col-12 col-md-3 col-lg-2 eg-sidebar eg-sidebar-admin py-4">
-          <div class="eg-sidebar-brand px-3 mb-3">
-            <span class="eg-sidebar-role">Office Admin</span>
-          </div>
-          <nav class="nav flex-column gap-1">
-            <a href="dashboard.php" class="eg-sidebar-link">
-              <i class="bi bi-speedometer2"></i>
-              <span>Dashboard</span>
-            </a>
-            <a href="scan.php" class="eg-sidebar-link">
-              <i class="bi bi-upc-scan"></i>
-              <span>Scanning</span>
-            </a>
-            <a href="employees.php" class="eg-sidebar-link active">
-              <i class="bi bi-people"></i>
-              <span>Employees</span>
-            </a>
-            <a href="../auth/logout.php" class="eg-sidebar-link eg-sidebar-link-danger mt-3">
-              <i class="bi bi-box-arrow-right"></i>
-              <span>Logout</span>
-            </a>
-          </nav>
-        </aside>
+        <?php include __DIR__ . '/../includes/sidebar_admin.php'; ?>
 
         <main class="col-12 col-md-9 col-lg-10 py-4">
-          <h3 class="mb-4 fw-bold">All Employees</h3>
-          <p class="text-muted small mb-3">Only SuperAdmin can create employee accounts. Data is loaded from the database.</p>
+          <h3 class="mb-4 fw-bold">Employees &amp; team leaders</h3>
+          <p class="text-muted small mb-3">Staff for this office. Only SuperAdmin creates accounts.</p>
           <div class="row g-3">
             <?php if (empty($employees)): ?>
               <div class="col-12">
@@ -82,13 +69,23 @@ if ($officeId) {
               </div>
             <?php else: ?>
               <?php foreach ($employees as $emp): ?>
+                <?php
+                $roleLabel = (($emp['role'] ?? '') === 'admin') ? 'Team leader' : 'Employee';
+                $positionText = ($hasPositionCol && !empty(trim((string) ($emp['position'] ?? '')))) ? trim($emp['position']) : '';
+                ?>
                 <div class="col-6 col-md-4 col-lg-3">
                   <div class="eg-employee-card">
                     <div class="d-flex align-items-center mb-2">
                       <div class="eg-avatar-circle me-2"></div>
-                      <div>
+                      <div class="flex-grow-1 min-w-0">
                         <div class="fw-semibold"><?= htmlspecialchars($emp['full_name']) ?></div>
                         <div class="text-muted small"><?= htmlspecialchars($emp['email']) ?></div>
+                        <div class="mt-1">
+                          <span class="badge bg-secondary bg-opacity-25 text-dark small"><?= htmlspecialchars($roleLabel) ?></span>
+                          <?php if ($positionText !== ''): ?>
+                            <span class="text-muted small ms-1"><?= htmlspecialchars($positionText) ?></span>
+                          <?php endif; ?>
+                        </div>
                       </div>
                     </div>
                   </div>
