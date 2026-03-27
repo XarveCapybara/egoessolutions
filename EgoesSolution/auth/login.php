@@ -13,6 +13,7 @@ session_start();
       integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
       crossorigin="anonymous"
     />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" />
     <link rel="stylesheet" href="../assets/css/style.css" />
   </head>
   <body class="bg-light">
@@ -71,6 +72,18 @@ session_start();
                     required
                     autocomplete="off"
                   />
+                  <span class="input-group-text bg-white">
+                    <button
+                      type="button"
+                      class="btn btn-sm border-0 p-0 d-flex align-items-center gap-1 text-secondary"
+                      id="togglePasswordBtn"
+                      aria-label="Show password"
+                      title="Show password"
+                    >
+                      <span class="bi bi-eye" id="togglePasswordIcon"></span>
+                      <span id="togglePasswordLabel">Show</span>
+                    </button>
+                  </span>
                   <div class="invalid-feedback">
                     Please enter your password.
                   </div>
@@ -116,6 +129,22 @@ session_start();
             },
             false
           );
+        });
+      })();
+
+      (function () {
+        const pwd = document.getElementById('password');
+        const btn = document.getElementById('togglePasswordBtn');
+        const icon = document.getElementById('togglePasswordIcon');
+        const label = document.getElementById('togglePasswordLabel');
+        if (!pwd || !btn || !icon || !label) return;
+        btn.addEventListener('click', function () {
+          const isHidden = pwd.type === 'password';
+          pwd.type = isHidden ? 'text' : 'password';
+          icon.className = isHidden ? 'bi bi-eye-slash' : 'bi bi-eye';
+          label.textContent = isHidden ? 'Hide' : 'Show';
+          btn.setAttribute('aria-label', isHidden ? 'Hide password' : 'Show password');
+          btn.setAttribute('title', isHidden ? 'Hide password' : 'Show password');
         });
       })();
     </script>

@@ -14,6 +14,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
 require_once __DIR__ . '/../config/database.php';
 
 $defaultRate = trim($_POST['default_hourly_rate'] ?? '');
+$deductionPerMinute = trim($_POST['deduction_per_minute'] ?? '');
 $employeeRates = $_POST['rate_amount'] ?? [];
 
 try {
@@ -29,6 +30,15 @@ try {
         $v = number_format((float) $defaultRate, 2, '.', '');
         $upsert = $pdo->prepare('
             INSERT INTO app_settings (setting_key, setting_value) VALUES ("hourly_rate_default", ?)
+            ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+        ');
+        $upsert->execute([$v]);
+    }
+
+    if ($deductionPerMinute !== '' && is_numeric($deductionPerMinute)) {
+        $v = number_format((float) $deductionPerMinute, 2, '.', '');
+        $upsert = $pdo->prepare('
+            INSERT INTO app_settings (setting_key, setting_value) VALUES ("deduction_per_minute", ?)
             ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
         ');
         $upsert->execute([$v]);

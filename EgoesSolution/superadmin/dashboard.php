@@ -33,15 +33,7 @@ if ($pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount()) {
     <link rel="stylesheet" href="../assets/css/style.css?v=blue1" />
   </head>
   <body class="bg-light">
-    <header class="eg-topbar d-flex justify-content-between align-items-center">
-      <div class="d-flex align-items-center">
-        <img src="../assets/images/egoes-logo.png?v=3" alt="E-GOES Solutions" class="eg-system-logo" />
-      </div>
-      <div class="d-flex align-items-center me-3">
-        <div class="me-2 fw-bold fs-4">Hi <?= htmlspecialchars($name) ?>!</div>
-        <div class="eg-avatar-circle"></div>
-      </div>
-    </header>
+    <?php include __DIR__ . '/../includes/header.php'; ?>
 
     <div class="container-fluid">
       <div class="row">

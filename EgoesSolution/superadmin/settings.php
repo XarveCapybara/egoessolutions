@@ -13,17 +13,23 @@ $settingsMessage = $_SESSION['settings_message'] ?? null;
 unset($_SESSION['settings_status'], $_SESSION['settings_message']);
 
 $defaultHourly = '';
+$deductionPerMinute = '';
 $employees = [];
 $hasRateAmount = false;
 $hasEmployeesTable = $pdo->query("SHOW TABLES LIKE 'employees'")->rowCount() > 0;
 
 try {
     $pdo->query('SELECT 1 FROM app_settings LIMIT 1');
-    $stmt = $pdo->prepare('SELECT setting_value FROM app_settings WHERE setting_key = ? LIMIT 1');
-    $stmt->execute(['hourly_rate_default']);
-    $row = $stmt->fetchColumn();
-    if ($row !== false && $row !== null && $row !== '') {
-        $defaultHourly = (string) $row;
+    $stmt = $pdo->prepare('SELECT setting_key, setting_value FROM app_settings WHERE setting_key IN (?, ?)');
+    $stmt->execute(['hourly_rate_default', 'deduction_per_minute']);
+    $rows = $stmt->fetchAll();
+    foreach ($rows as $row) {
+        if (($row['setting_key'] ?? '') === 'hourly_rate_default' && ($row['setting_value'] ?? '') !== '') {
+            $defaultHourly = (string) $row['setting_value'];
+        }
+        if (($row['setting_key'] ?? '') === 'deduction_per_minute' && ($row['setting_value'] ?? '') !== '') {
+            $deductionPerMinute = (string) $row['setting_value'];
+        }
     }
 } catch (PDOException $e) {
     // app_settings may not exist yet
@@ -97,15 +103,7 @@ if ($hasEmployeesTable) {
     </style>
   </head>
   <body class="bg-light">
-    <header class="eg-topbar d-flex justify-content-between align-items-center">
-      <div class="d-flex align-items-center">
-        <img src="../assets/images/egoes-logo.png?v=3" alt="E-GOES Solutions" class="eg-system-logo" />
-      </div>
-      <div class="d-flex align-items-center me-3">
-        <div class="me-2 fw-bold fs-5">SuperAdmin-<?= htmlspecialchars($name) ?></div>
-        <div class="eg-avatar-circle"></div>
-      </div>
-    </header>
+    <?php include __DIR__ . '/../includes/header.php'; ?>
 
     <div class="container-fluid">
       <div class="row">
@@ -113,7 +111,7 @@ if ($hasEmployeesTable) {
 
         <main class="col-12 col-md-9 col-lg-10 py-4">
           <h3 class="fw-bold mb-3">Settings</h3>
-          <p class="text-muted mb-4">Configure default and per-user hourly rates for employees and admins.</p>
+          <p class="text-muted mb-4">Configure rates and deduction settings for payroll.</p>
 
           <?php if (!empty($settingsMessage)): ?>
             <div class="alert <?= $settingsStatus === 'success' ? 'alert-success' : 'alert-danger' ?> py-2 mb-3">
@@ -130,9 +128,9 @@ ALTER TABLE employees ADD COLUMN rate_type VARCHAR(32) NULL DEFAULT NULL;</pre>
           <?php endif; ?>
 
           <form action="save_settings_rates.php" method="post" class="eg-panel p-4 mb-4">
-            <h5 class="mb-3">Default hourly rate</h5>
-            <p class="text-muted small mb-3">Used as the system default reference (stored in <code>app_settings</code>).</p>
-            <div class="row g-3 align-items-end">
+            <h5 class="mb-3">Rates</h5>
+            <p class="text-muted small mb-3">Global rate defaults stored in <code>app_settings</code>.</p>
+            <div class="row g-3 align-items-end mb-2">
               <div class="col-md-4">
                 <label for="default_hourly_rate" class="form-label">Amount per hour</label>
                 <input
@@ -143,6 +141,26 @@ ALTER TABLE employees ADD COLUMN rate_type VARCHAR(32) NULL DEFAULT NULL;</pre>
                   id="default_hourly_rate"
                   name="default_hourly_rate"
                   value="<?= htmlspecialchars($defaultHourly) ?>"
+                  placeholder="0.00"
+                />
+              </div>
+            </div>
+
+            <hr class="my-4" />
+
+            <h5 class="mb-3">Deductions</h5>
+            <p class="text-muted small mb-3">Late-deduction defaults stored in <code>app_settings</code>.</p>
+            <div class="row g-3 align-items-end">
+              <div class="col-md-4">
+                <label for="deduction_per_minute" class="form-label">Deduction per minute</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  class="form-control"
+                  id="deduction_per_minute"
+                  name="deduction_per_minute"
+                  value="<?= htmlspecialchars($deductionPerMinute) ?>"
                   placeholder="0.00"
                 />
               </div>

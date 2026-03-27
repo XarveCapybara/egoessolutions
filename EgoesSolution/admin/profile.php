@@ -1,19 +1,19 @@
 <?php
 session_start();
-if (($_SESSION['role'] ?? '') !== 'employee') {
+if (($_SESSION['role'] ?? '') !== 'admin') {
     header('Location: ../auth/login.php');
     exit;
 }
 
 require_once __DIR__ . '/../config/database.php';
 
-$fullName = $_SESSION['display_name'] ?? 'Employee';
+$fullName = $_SESSION['display_name'] ?? 'Admin';
 $parts = explode(' ', $fullName, 2);
 $userId = (int) ($_SESSION['user_id'] ?? 0);
 
 $defaults = [
     'nickname' => '',
-    'first_name' => $parts[0] ?? 'Employee',
+    'first_name' => $parts[0] ?? 'Admin',
     'last_name' => $parts[1] ?? '',
     'avatar' => '',
     'date_of_birth' => '',
@@ -99,7 +99,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $p['address'] = $address;
         $p['phone'] = $phone;
         $p['email'] = $email;
-
         if ($userId > 0) {
             try {
                 $upsertStmt = $pdo->prepare('
@@ -133,10 +132,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $editMode = true;
             }
         }
-
-        if ($error !== null) {
-            // Keep user on edit form when save fails.
-        } else {
+        if ($error === null) {
             $_SESSION['display_name'] = $p['nickname'] !== '' ? $p['nickname'] : (trim($firstName . ' ' . $lastName) ?: $firstName);
             header('Location: profile.php?saved=1');
             exit;
@@ -149,7 +145,7 @@ if (isset($_GET['saved'])) {
 }
 
 $profile = $p;
-$name = $_SESSION['display_name'] ?? 'Employee';
+$name = $_SESSION['display_name'] ?? 'Admin';
 $avatarUrl = $profile['avatar'] ?? null;
 $employeeCode = '';
 if ($userId > 0) {
@@ -164,7 +160,7 @@ if ($fullDisplayName === '') {
     $fullDisplayName = '—';
 }
 
-function eg_format_dob(?string $ymd): string
+function eg_admin_format_dob(?string $ymd): string
 {
     if ($ymd === null || $ymd === '') {
         return '—';
@@ -173,7 +169,7 @@ function eg_format_dob(?string $ymd): string
     return $t ? date('M j, Y', $t) : '—';
 }
 
-function eg_disp(?string $s): string
+function eg_admin_disp(?string $s): string
 {
     $s = trim((string) $s);
     return $s === '' ? '—' : $s;
@@ -198,7 +194,7 @@ function eg_disp(?string $s): string
     <link rel="stylesheet" href="../assets/css/style.css" />
   </head>
   <body class="bg-light eg-profile-page eg-profile-page--ref">
-    <?php include __DIR__ . '/includes/header.php'; ?>
+    <?php include __DIR__ . '/../includes/header.php'; ?>
 
     <div class="container-fluid pt-3">
       <div class="eg-profile-back-row">
@@ -297,23 +293,23 @@ function eg_disp(?string $s): string
               </div>
               <div class="eg-profile-ref-row">
                 <dt>Date of Birth</dt>
-                <dd><?= htmlspecialchars(eg_format_dob($profile['date_of_birth'] ?? '')) ?></dd>
+                <dd><?= htmlspecialchars(eg_admin_format_dob($profile['date_of_birth'] ?? '')) ?></dd>
               </div>
               <div class="eg-profile-ref-row">
                 <dt>Gender</dt>
-                <dd><?= htmlspecialchars(eg_disp($profile['gender'] ?? '')) ?></dd>
+                <dd><?= htmlspecialchars(eg_admin_disp($profile['gender'] ?? '')) ?></dd>
               </div>
               <div class="eg-profile-ref-row">
                 <dt>Address</dt>
-                <dd><?= htmlspecialchars(eg_disp($profile['address'] ?? '')) ?></dd>
+                <dd><?= htmlspecialchars(eg_admin_disp($profile['address'] ?? '')) ?></dd>
               </div>
               <div class="eg-profile-ref-row">
                 <dt>Phone Number</dt>
-                <dd><?= htmlspecialchars(eg_disp($profile['phone'] ?? '')) ?></dd>
+                <dd><?= htmlspecialchars(eg_admin_disp($profile['phone'] ?? '')) ?></dd>
               </div>
               <div class="eg-profile-ref-row">
                 <dt>Email</dt>
-                <dd><?= htmlspecialchars(eg_disp($profile['email'] ?? '')) ?></dd>
+                <dd><?= htmlspecialchars(eg_admin_disp($profile['email'] ?? '')) ?></dd>
               </div>
             </dl>
             <hr class="eg-profile-ref-divider" />
@@ -321,10 +317,10 @@ function eg_disp(?string $s): string
             <?php if ($employeeCode !== ''): ?>
               <div class="mb-2 text-muted small">Employee Code: <strong><?= htmlspecialchars($employeeCode) ?></strong></div>
               <div class="bg-white p-3 border rounded mb-2 d-inline-block">
-                <svg id="employeeBarcode"></svg>
+                <svg id="adminBarcode"></svg>
               </div>
               <div>
-                <button type="button" id="downloadBarcodeBtn" class="eg-profile-ref-btn eg-profile-ref-btn--primary">Download Barcode</button>
+                <button type="button" id="downloadAdminBarcodeBtn" class="eg-profile-ref-btn eg-profile-ref-btn--primary">Download Barcode</button>
               </div>
             <?php else: ?>
               <p class="text-muted mb-2">No employee code found yet.</p>
@@ -346,8 +342,8 @@ function eg_disp(?string $s): string
       <script>
         (function () {
           const code = <?= json_encode($employeeCode) ?>;
-          const barcodeSvg = document.getElementById('employeeBarcode');
-          const downloadBtn = document.getElementById('downloadBarcodeBtn');
+          const barcodeSvg = document.getElementById('adminBarcode');
+          const downloadBtn = document.getElementById('downloadAdminBarcodeBtn');
           if (!barcodeSvg || !downloadBtn) return;
 
           JsBarcode(barcodeSvg, code, {

@@ -16,10 +16,12 @@ require_once __DIR__ . '/../config/database.php';
 $officeName = trim($_POST['name'] ?? '');
 $officeAddress = trim($_POST['address'] ?? '');
 $teamLeaderUserId = (int) ($_POST['team_leader_user_id'] ?? 0);
+$timeIn = trim($_POST['time_in'] ?? '');
+$timeOut = trim($_POST['time_out'] ?? '');
 
-if ($officeName === '' || $officeAddress === '') {
+if ($officeName === '' || $officeAddress === '' || $timeIn === '' || $timeOut === '') {
     $_SESSION['office_create_status'] = 'error';
-    $_SESSION['office_create_message'] = 'Please fill out office name and location.';
+    $_SESSION['office_create_message'] = 'Please fill out office name, location, time-in, and time-out.';
     header('Location: offices.php');
     exit;
 }
@@ -32,6 +34,22 @@ try {
     $hasTeamLeaderUserIdColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'team_leader_user_id'")->rowCount() > 0;
     if (!$hasTeamLeaderUserIdColumn) {
         $pdo->exec("ALTER TABLE offices ADD COLUMN team_leader_user_id INT NULL AFTER team_leader");
+    }
+    $hasTimeInColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_in'")->rowCount() > 0;
+    if (!$hasTimeInColumn) {
+        $pdo->exec("ALTER TABLE offices ADD COLUMN time_in TIME NULL AFTER team_leader_user_id");
+    }
+    $hasTimeOutColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_out'")->rowCount() > 0;
+    if (!$hasTimeOutColumn) {
+        $pdo->exec("ALTER TABLE offices ADD COLUMN time_out TIME NULL AFTER time_in");
+    }
+
+    $timeRegex = '/^([01]\d|2[0-3]):[0-5]\d$/';
+    if (!preg_match($timeRegex, $timeIn) || !preg_match($timeRegex, $timeOut)) {
+        $_SESSION['office_create_status'] = 'error';
+        $_SESSION['office_create_message'] = 'Please provide valid time-in and time-out values.';
+        header('Location: offices.php');
+        exit;
     }
 
     $existsStmt = $pdo->prepare('SELECT id FROM offices WHERE LOWER(name) = LOWER(?) LIMIT 1');
@@ -66,8 +84,8 @@ try {
         $teamLeaderName = $teamLeaderRow['full_name'];
     }
 
-    $insertStmt = $pdo->prepare('INSERT INTO offices (name, address, team_leader, team_leader_user_id, is_active) VALUES (?, ?, ?, ?, 1)');
-    $insertStmt->execute([$officeName, $officeAddress, $teamLeaderName, $teamLeaderUserId > 0 ? $teamLeaderUserId : null]);
+    $insertStmt = $pdo->prepare('INSERT INTO offices (name, address, team_leader, team_leader_user_id, time_in, time_out, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)');
+    $insertStmt->execute([$officeName, $officeAddress, $teamLeaderName, $teamLeaderUserId > 0 ? $teamLeaderUserId : null, $timeIn . ':00', $timeOut . ':00']);
     $createdOfficeId = (int) $pdo->lastInsertId();
 
     if ($teamLeaderUserId > 0) {

@@ -15,10 +15,16 @@ if ($officeId <= 0) {
 }
 
 $hasTeamLeaderColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'team_leader'")->rowCount() > 0;
+$hasTimeInColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_in'")->rowCount() > 0;
+$hasTimeOutColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_out'")->rowCount() > 0;
 if ($hasTeamLeaderColumn) {
-    $officeStmt = $pdo->prepare('SELECT id, name, address, team_leader FROM offices WHERE id = ? LIMIT 1');
+    $selectTimeIn = $hasTimeInColumn ? 'time_in' : 'NULL AS time_in';
+    $selectTimeOut = $hasTimeOutColumn ? 'time_out' : 'NULL AS time_out';
+    $officeStmt = $pdo->prepare("SELECT id, name, address, team_leader, {$selectTimeIn}, {$selectTimeOut} FROM offices WHERE id = ? LIMIT 1");
 } else {
-    $officeStmt = $pdo->prepare('SELECT id, name, address, NULL AS team_leader FROM offices WHERE id = ? LIMIT 1');
+    $selectTimeIn = $hasTimeInColumn ? 'time_in' : 'NULL AS time_in';
+    $selectTimeOut = $hasTimeOutColumn ? 'time_out' : 'NULL AS time_out';
+    $officeStmt = $pdo->prepare("SELECT id, name, address, NULL AS team_leader, {$selectTimeIn}, {$selectTimeOut} FROM offices WHERE id = ? LIMIT 1");
 }
 $officeStmt->execute([$officeId]);
 $office = $officeStmt->fetch();
@@ -105,15 +111,7 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
     <link rel="stylesheet" href="../assets/css/style.css?v=blue1" />
   </head>
   <body class="bg-light">
-    <header class="eg-topbar d-flex justify-content-between align-items-center">
-      <div class="d-flex align-items-center">
-        <img src="../assets/images/egoes-logo.png?v=3" alt="E-GOES Solutions" class="eg-system-logo" />
-      </div>
-      <div class="d-flex align-items-center me-3">
-        <div class="me-2 fw-bold fs-5">SuperAdmin-<?= htmlspecialchars($name) ?></div>
-        <div class="eg-avatar-circle"></div>
-      </div>
-    </header>
+    <?php include __DIR__ . '/../includes/header.php'; ?>
 
     <div class="container-fluid">
       <div class="row">
@@ -125,6 +123,14 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
               <h3 class="fw-bold mb-1"><?= htmlspecialchars($office['name']) ?> Overview</h3>
               <p class="text-muted mb-0"><?= htmlspecialchars($office['address'] ?? 'No address provided') ?></p>
               <p class="text-muted small mb-0">Team Leader: <?= htmlspecialchars($office['team_leader'] ?: 'Not assigned') ?></p>
+              <p class="text-muted small mb-0">
+                Work Time:
+                <?php if (!empty($office['time_in']) && !empty($office['time_out'])): ?>
+                  <?= date('h:i A', strtotime($office['time_in'])) ?> - <?= date('h:i A', strtotime($office['time_out'])) ?>
+                <?php else: ?>
+                  Not set
+                <?php endif; ?>
+              </p>
             </div>
             <div class="d-flex gap-2">
               <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addEmployeeModal">

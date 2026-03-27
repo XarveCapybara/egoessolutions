@@ -32,6 +32,9 @@ unset($_SESSION['employee_create_status'], $_SESSION['employee_create_message'])
 $teamLeaderCreateStatus = $_SESSION['team_leader_create_status'] ?? null;
 $teamLeaderCreateMessage = $_SESSION['team_leader_create_message'] ?? null;
 unset($_SESSION['team_leader_create_status'], $_SESSION['team_leader_create_message']);
+$passwordUpdateStatus = $_SESSION['password_update_status'] ?? null;
+$passwordUpdateMessage = $_SESSION['password_update_message'] ?? null;
+unset($_SESSION['password_update_status'], $_SESSION['password_update_message']);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -52,17 +55,7 @@ unset($_SESSION['team_leader_create_status'], $_SESSION['team_leader_create_mess
     <link rel="stylesheet" href="../assets/css/style.css?v=blue1" />
   </head>
   <body class="bg-light">
-    <header class="eg-topbar d-flex justify-content-between align-items-center">
-      <div class="d-flex align-items-center">
-        <img src="../assets/images/egoes-logo.png?v=3" alt="E-GOES Solutions" class="eg-system-logo" />
-      </div>
-      <div class="d-flex align-items-center me-3">
-        <div class="me-2 fw-bold fs-5">
-          SuperAdmin-<?= htmlspecialchars($name) ?>
-        </div>
-        <div class="eg-avatar-circle"></div>
-      </div>
-    </header>
+    <?php include __DIR__ . '/../includes/header.php'; ?>
 
     <div class="container-fluid">
       <div class="row">
@@ -79,6 +72,11 @@ unset($_SESSION['team_leader_create_status'], $_SESSION['team_leader_create_mess
           <?php if (!empty($teamLeaderCreateMessage)): ?>
             <div class="alert <?= $teamLeaderCreateStatus === 'success' ? 'alert-success' : 'alert-danger' ?> py-2">
               <?= htmlspecialchars($teamLeaderCreateMessage) ?>
+            </div>
+          <?php endif; ?>
+          <?php if (!empty($passwordUpdateMessage)): ?>
+            <div class="alert <?= $passwordUpdateStatus === 'success' ? 'alert-success' : 'alert-danger' ?> py-2">
+              <?= htmlspecialchars($passwordUpdateMessage) ?>
             </div>
           <?php endif; ?>
           <div class="eg-panel p-3 mb-4">
@@ -154,7 +152,21 @@ unset($_SESSION['team_leader_create_status'], $_SESSION['team_leader_create_mess
                 $positionText = ($hasPositionCol && !empty(trim((string) ($emp['position'] ?? '')))) ? trim($emp['position']) : '';
                 ?>
                 <div class="col-6 col-md-4 col-lg-3">
-                  <div class="eg-employee-card">
+                  <div class="eg-employee-card position-relative">
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-primary position-absolute top-0 end-0 m-2 d-inline-flex align-items-center justify-content-center"
+                      style="width: 32px; height: 32px;"
+                      data-bs-toggle="modal"
+                      data-bs-target="#changePasswordModal"
+                      data-user-id="<?= (int) $emp['id'] ?>"
+                      data-user-name="<?= htmlspecialchars($emp['full_name']) ?>"
+                      data-user-role="<?= htmlspecialchars($roleLabel) ?>"
+                      title="Change Password"
+                      aria-label="Change Password"
+                    >
+                      <i class="bi bi-key"></i>
+                    </button>
                     <div class="d-flex align-items-center mb-2">
                       <div class="eg-avatar-circle me-2"></div>
                       <div class="flex-grow-1 min-w-0">
@@ -174,6 +186,36 @@ unset($_SESSION['team_leader_create_status'], $_SESSION['team_leader_create_mess
             <?php endif; ?>
           </div>
         </main>
+      </div>
+    </div>
+
+    <div class="modal fade" id="changePasswordModal" tabindex="-1" aria-labelledby="changePasswordModalLabel" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="changePasswordModalLabel">Change User Password</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <form action="update_user_password.php" method="post">
+            <div class="modal-body">
+              <input type="hidden" name="user_id" id="passwordModalUserId" value="" />
+              <div class="mb-2 text-muted small" id="passwordModalTargetText"></div>
+              <div class="mb-3">
+                <label for="new_password" class="form-label">New Password</label>
+                <input type="password" class="form-control" id="new_password" name="new_password" minlength="8" required />
+                <div class="form-text">Minimum 8 characters.</div>
+              </div>
+              <div class="mb-0">
+                <label for="confirm_password" class="form-label">Confirm Password</label>
+                <input type="password" class="form-control" id="confirm_password" name="confirm_password" minlength="8" required />
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+              <button type="submit" class="btn btn-primary">Update Password</button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
 
@@ -201,6 +243,25 @@ unset($_SESSION['team_leader_create_status'], $_SESSION['team_leader_create_mess
         teamLeaderPanel.classList.remove('d-none');
         employeePanel.classList.add('d-none');
       });
+
+      const changePasswordModal = document.getElementById('changePasswordModal');
+      if (changePasswordModal) {
+        changePasswordModal.addEventListener('show.bs.modal', function (event) {
+          const btn = event.relatedTarget;
+          if (!btn) return;
+          const userId = btn.getAttribute('data-user-id') || '';
+          const userName = btn.getAttribute('data-user-name') || 'User';
+          const userRole = btn.getAttribute('data-user-role') || '';
+          const userIdInput = document.getElementById('passwordModalUserId');
+          const targetText = document.getElementById('passwordModalTargetText');
+          const newPasswordInput = document.getElementById('new_password');
+          const confirmPasswordInput = document.getElementById('confirm_password');
+          if (userIdInput) userIdInput.value = userId;
+          if (targetText) targetText.textContent = 'Updating password for: ' + userName + (userRole ? ' (' + userRole + ')' : '');
+          if (newPasswordInput) newPasswordInput.value = '';
+          if (confirmPasswordInput) confirmPasswordInput.value = '';
+        });
+      }
     </script>
   </body>
 </html>

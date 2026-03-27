@@ -16,6 +16,7 @@ require_once __DIR__ . '/../config/database.php';
 $adminOfficeId = (int) ($_SESSION['office_id'] ?? 0);
 $barcodeId = trim($_POST['barcode_id'] ?? '');
 $scanType = $_POST['scan_type'] ?? 'in';
+$clientNowRaw = trim($_POST['client_now'] ?? '');
 
 if ($adminOfficeId <= 0) {
     $_SESSION['scan_status'] = 'error';
@@ -39,12 +40,46 @@ if (!in_array($scanType, ['in', 'out'], true)) {
 }
 
 try {
+    $hasAppSettingsTable = $pdo->query("SHOW TABLES LIKE 'app_settings'")->rowCount() > 0;
+    $deductionPerMinute = 0.0;
+    if ($hasAppSettingsTable) {
+        $deductionStmt = $pdo->prepare('SELECT setting_value FROM app_settings WHERE setting_key = ? LIMIT 1');
+        $deductionStmt->execute(['deduction_per_minute']);
+        $deductionValue = $deductionStmt->fetchColumn();
+        if ($deductionValue !== false && $deductionValue !== null && is_numeric($deductionValue)) {
+            $deductionPerMinute = (float) $deductionValue;
+        }
+    }
+
+    $hasOfficeTimeInColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_in'")->rowCount() > 0;
+    $hasOfficeTimeOutColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_out'")->rowCount() > 0;
+    $officeTimeIn = null;
+    $officeTimeOut = null;
+    if ($hasOfficeTimeInColumn && $hasOfficeTimeOutColumn) {
+        $officeScheduleStmt = $pdo->prepare('SELECT time_in, time_out FROM offices WHERE id = ? LIMIT 1');
+        $officeScheduleStmt->execute([$adminOfficeId]);
+        $officeSchedule = $officeScheduleStmt->fetch();
+        if ($officeSchedule) {
+            $officeTimeIn = $officeSchedule['time_in'] ?? null;
+            $officeTimeOut = $officeSchedule['time_out'] ?? null;
+        }
+    }
+
     $hasAttendanceLogsTable = $pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount() > 0;
     if (!$hasAttendanceLogsTable) {
         $_SESSION['scan_status'] = 'error';
         $_SESSION['scan_message'] = 'Debug: table `attendance_logs` does not exist.';
         header('Location: scan.php');
         exit;
+    }
+
+    $hasLateMinutesColumn = $pdo->query("SHOW COLUMNS FROM attendance_logs LIKE 'late_minutes'")->rowCount() > 0;
+    if (!$hasLateMinutesColumn) {
+        $pdo->exec("ALTER TABLE attendance_logs ADD COLUMN late_minutes INT NOT NULL DEFAULT 0 AFTER status");
+    }
+    $hasDeductionAmountColumn = $pdo->query("SHOW COLUMNS FROM attendance_logs LIKE 'deduction_amount'")->rowCount() > 0;
+    if (!$hasDeductionAmountColumn) {
+        $pdo->exec("ALTER TABLE attendance_logs ADD COLUMN deduction_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER late_minutes");
     }
 
     $hasEmployeeCodeColumn = $pdo->query("SHOW COLUMNS FROM employees LIKE 'employee_code'")->rowCount() > 0;
@@ -81,26 +116,105 @@ try {
         exit;
     }
 
-    $today = date('Y-m-d');
+    $now = new DateTimeImmutable('now');
+    if ($clientNowRaw !== '') {
+        try {
+            // Expect local wall-clock format from browser: YYYY-MM-DD HH:MM:SS
+            $parsedNow = DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $clientNowRaw);
+            if ($parsedNow instanceof DateTimeImmutable) {
+                $now = $parsedNow;
+            } else {
+                $now = new DateTimeImmutable($clientNowRaw);
+            }
+        } catch (Exception $e) {
+            // Fallback to server time when client timestamp is invalid.
+        }
+    }
+    $nowSql = $now->format('Y-m-d H:i:s');
+    $effectiveLogDate = $now->format('Y-m-d');
+    $isGraveyardShift = false;
+    $scheduledTimeInAt = null;
+    $scheduledTimeOutAt = null;
+    if (!empty($officeTimeIn) && !empty($officeTimeOut)) {
+        $officeTimeInOnly = substr((string) $officeTimeIn, 0, 8);
+        $officeTimeOutOnly = substr((string) $officeTimeOut, 0, 8);
+        $isGraveyardShift = $officeTimeInOnly > $officeTimeOutOnly;
+
+        $toSeconds = static function (string $hhmmss): int {
+            [$h, $m, $s] = array_map('intval', explode(':', $hhmmss));
+            return ($h * 3600) + ($m * 60) + $s;
+        };
+        $nowSec = $toSeconds($now->format('H:i:s'));
+        $inSec = $toSeconds($officeTimeInOnly);
+        $outSec = $toSeconds($officeTimeOutOnly);
+        $allowedStartSec = ($inSec - 3600 + 86400) % 86400;
+
+        if ($isGraveyardShift && $nowSec <= $outSec) {
+            $shiftBaseDate = $now->modify('-1 day')->format('Y-m-d');
+        } else {
+            $shiftBaseDate = $now->format('Y-m-d');
+        }
+
+        $withinAllowedWindow = false;
+        if ($isGraveyardShift) {
+            $withinAllowedWindow = ($nowSec >= $allowedStartSec) || ($nowSec <= $outSec);
+        } else {
+            $withinAllowedWindow = ($nowSec >= $allowedStartSec) && ($nowSec <= $outSec);
+        }
+
+        $scheduledTimeInAt = new DateTimeImmutable($shiftBaseDate . ' ' . $officeTimeInOnly);
+        $scheduledTimeOutAt = new DateTimeImmutable($shiftBaseDate . ' ' . $officeTimeOutOnly);
+        if ($isGraveyardShift) {
+            $scheduledTimeOutAt = $scheduledTimeOutAt->modify('+1 day');
+        }
+        $effectiveLogDate = $scheduledTimeInAt->format('Y-m-d');
+
+        if ($scanType === 'in' && !$withinAllowedWindow) {
+            $_SESSION['scan_status'] = 'error';
+            $_SESSION['scan_message'] = 'Time-in is only allowed within 1 hour before shift start and before scheduled time-out.';
+            header('Location: scan.php');
+            exit;
+        }
+        if ($scanType === 'out' && !$withinAllowedWindow) {
+            $_SESSION['scan_status'] = 'error';
+            $_SESSION['scan_message'] = 'Attendance can only be set before scheduled time-out.';
+            header('Location: scan.php');
+            exit;
+        }
+    }
 
     $attendanceStmt = $pdo->prepare('
-        SELECT id, time_in, time_out
+        SELECT id, time_in, time_out, late_minutes, deduction_amount
         FROM attendance_logs
         WHERE employee_id = ? AND office_id = ? AND log_date = ?
         LIMIT 1
     ');
-    $attendanceStmt->execute([(int) $employee['employee_id'], $adminOfficeId, $today]);
+    $attendanceStmt->execute([(int) $employee['employee_id'], $adminOfficeId, $effectiveLogDate]);
     $attendance = $attendanceStmt->fetch();
 
     if ($scanType === 'in' && !$attendance) {
+        $lateMinutes = 0;
+        $deductionAmount = 0.00;
+        if ($scheduledTimeInAt instanceof DateTimeImmutable && $now > $scheduledTimeInAt) {
+            $lateMinutes = (int) floor(($now->getTimestamp() - $scheduledTimeInAt->getTimestamp()) / 60);
+            $deductibleMinutes = max(0, $lateMinutes - 60);
+            if ($deductibleMinutes > 0 && $deductionPerMinute > 0) {
+                $deductionAmount = round($deductibleMinutes * $deductionPerMinute, 2);
+            }
+        }
+
         $insertStmt = $pdo->prepare('
-            INSERT INTO attendance_logs (employee_id, office_id, log_date, time_in, time_out, status)
-            VALUES (?, ?, ?, NOW(), NULL, "Present")
+            INSERT INTO attendance_logs (employee_id, office_id, log_date, time_in, time_out, status, late_minutes, deduction_amount)
+            VALUES (?, ?, ?, ?, NULL, "Present", ?, ?)
         ');
-        $insertStmt->execute([(int) $employee['employee_id'], $adminOfficeId, $today]);
+        $insertStmt->execute([(int) $employee['employee_id'], $adminOfficeId, $effectiveLogDate, $nowSql, $lateMinutes, $deductionAmount]);
 
         $_SESSION['scan_status'] = 'success';
-        $_SESSION['scan_message'] = $employee['full_name'] . ' timed in successfully.';
+        if ($deductionAmount > 0) {
+            $_SESSION['scan_message'] = $employee['full_name'] . ' timed in successfully. Deduction: ' . number_format($deductionAmount, 2) . '.';
+        } else {
+            $_SESSION['scan_message'] = $employee['full_name'] . ' timed in successfully.';
+        }
         header('Location: scan.php');
         exit;
     }
@@ -128,8 +242,8 @@ try {
     }
 
     if (empty($attendance['time_out'])) {
-        $updateStmt = $pdo->prepare('UPDATE attendance_logs SET time_out = NOW(), status = "Present" WHERE id = ?');
-        $updateStmt->execute([(int) $attendance['id']]);
+        $updateStmt = $pdo->prepare('UPDATE attendance_logs SET time_out = ?, status = "Present" WHERE id = ?');
+        $updateStmt->execute([$nowSql, (int) $attendance['id']]);
 
         $_SESSION['scan_status'] = 'success';
         $_SESSION['scan_message'] = $employee['full_name'] . ' timed out successfully.';

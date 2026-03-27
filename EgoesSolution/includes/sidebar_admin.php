@@ -16,7 +16,7 @@ $currentPage = basename($_SERVER['PHP_SELF'] ?? '');
     </a>
     <a href="payroll.php" class="eg-sidebar-link <?= $currentPage === 'payroll.php' ? 'active' : '' ?>">
       <i class="bi bi-currency-dollar"></i>
-      <span>Payroll</span>
+      <span>Payslip</span>
     </a>
     <a href="employees.php" class="eg-sidebar-link <?= $currentPage === 'employees.php' ? 'active' : '' ?>">
       <i class="bi bi-people"></i>

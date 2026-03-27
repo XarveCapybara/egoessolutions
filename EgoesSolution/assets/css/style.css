@@ -1107,4 +1107,84 @@ body .eg-profile-container--ref {
   color: #111827;
 }
 
+/* Mobile layout improvements for admin/superadmin pages */
+@media (max-width: 767.98px) {
+  .eg-topbar {
+    padding: 0.55rem 0.75rem;
+  }
+
+  .eg-system-logo {
+    width: 168px;
+  }
+
+  .eg-sidebar {
+    min-height: calc(100vh - 56px);
+    padding: 0.55rem 0.35rem;
+    border-bottom: none !important;
+    border-right: 1px solid #dbeafe !important;
+    width: auto !important;
+    max-width: 72px !important;
+    flex: 0 0 72px !important;
+  }
+
+  .eg-sidebar-brand {
+    margin-bottom: 0.3rem;
+    padding: 0;
+    text-align: center;
+  }
+
+  .eg-sidebar-role {
+    font-size: 0.52rem !important;
+    letter-spacing: 0.04em !important;
+  }
+
+  .eg-sidebar .nav {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+
+  .eg-sidebar-link {
+    margin-bottom: 0;
+    padding: 0.55rem 0.45rem;
+    border-radius: 0.7rem;
+    font-size: 0.75rem;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .eg-sidebar-link i {
+    font-size: 1.05rem;
+    width: 1.1rem;
+    margin: 0;
+  }
+
+  .eg-sidebar-link span {
+    display: none;
+  }
+
+  .eg-sidebar + main.col-12 {
+    width: auto !important;
+    flex: 1 1 0 !important;
+    max-width: none !important;
+  }
+
+  .eg-sidebar + main {
+    padding-left: 0.7rem !important;
+    padding-right: 0.7rem !important;
+  }
+
+  .eg-panel {
+    border-radius: 1rem;
+    padding: 1rem;
+  }
+
+  .eg-metric-card {
+    border-radius: 1rem;
+    padding: 0.85rem 0.95rem;
+  }
+}
+
 

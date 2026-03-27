@@ -30,8 +30,22 @@ if (!$user || !password_verify($password, $user['password_hash'])) {
 }
 
 // Login OK
+$displayName = (string) ($user['full_name'] ?? 'User');
+try {
+    $hasUserProfiles = $pdo->query("SHOW TABLES LIKE 'user_profiles'")->rowCount() > 0;
+    if ($hasUserProfiles) {
+        $nickStmt = $pdo->prepare('SELECT nickname FROM user_profiles WHERE user_id = ? LIMIT 1');
+        $nickStmt->execute([(int) $user['id']]);
+        $nickname = trim((string) ($nickStmt->fetchColumn() ?: ''));
+        if ($nickname !== '') {
+            $displayName = $nickname;
+        }
+    }
+} catch (PDOException $e) {
+    // Fallback to users.full_name if user_profiles lookup fails.
+}
 $_SESSION['role'] = $user['role'];
-$_SESSION['display_name'] = $user['full_name'];
+$_SESSION['display_name'] = $displayName;
 $_SESSION['user_id'] = $user['id'];
 $_SESSION['user_email'] = $user['email'];
 $_SESSION['office_id'] = $user['office_id'];

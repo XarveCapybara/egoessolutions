@@ -9,13 +9,19 @@ $name = $_SESSION['display_name'] ?? 'Super Admin';
 require_once __DIR__ . '/../config/database.php';
 $hasTeamLeaderColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'team_leader'")->rowCount() > 0;
 $hasTeamLeaderUserIdColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'team_leader_user_id'")->rowCount() > 0;
+$hasTimeInColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_in'")->rowCount() > 0;
+$hasTimeOutColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_out'")->rowCount() > 0;
 if (!$hasTeamLeaderUserIdColumn) {
     $pdo->exec("ALTER TABLE offices ADD COLUMN team_leader_user_id INT NULL AFTER team_leader");
 }
 if ($hasTeamLeaderColumn) {
-    $offices = $pdo->query('SELECT id, name, address, team_leader, team_leader_user_id FROM offices ORDER BY name')->fetchAll();
+    $selectTimeIn = $hasTimeInColumn ? 'time_in' : 'NULL AS time_in';
+    $selectTimeOut = $hasTimeOutColumn ? 'time_out' : 'NULL AS time_out';
+    $offices = $pdo->query("SELECT id, name, address, team_leader, team_leader_user_id, {$selectTimeIn}, {$selectTimeOut} FROM offices ORDER BY name")->fetchAll();
 } else {
-    $offices = $pdo->query('SELECT id, name, address, NULL AS team_leader, NULL AS team_leader_user_id FROM offices ORDER BY name')->fetchAll();
+    $selectTimeIn = $hasTimeInColumn ? 'time_in' : 'NULL AS time_in';
+    $selectTimeOut = $hasTimeOutColumn ? 'time_out' : 'NULL AS time_out';
+    $offices = $pdo->query("SELECT id, name, address, NULL AS team_leader, NULL AS team_leader_user_id, {$selectTimeIn}, {$selectTimeOut} FROM offices ORDER BY name")->fetchAll();
 }
 $admins = $pdo->query('SELECT id, full_name FROM users WHERE role = "admin" ORDER BY full_name')->fetchAll();
 $assignedTeamLeaderRows = $pdo->query('SELECT team_leader_user_id FROM offices WHERE team_leader_user_id IS NOT NULL')->fetchAll();
@@ -49,15 +55,7 @@ unset($_SESSION['office_edit_status'], $_SESSION['office_edit_message']);
     <link rel="stylesheet" href="../assets/css/style.css?v=blue1" />
   </head>
   <body class="bg-light">
-    <header class="eg-topbar d-flex justify-content-between align-items-center">
-      <div class="d-flex align-items-center">
-        <img src="../assets/images/egoes-logo.png?v=3" alt="E-GOES Solutions" class="eg-system-logo" />
-      </div>
-      <div class="d-flex align-items-center me-3">
-        <div class="me-2 fw-bold fs-5">SuperAdmin-<?= htmlspecialchars($name) ?></div>
-        <div class="eg-avatar-circle"></div>
-      </div>
-    </header>
+    <?php include __DIR__ . '/../includes/header.php'; ?>
 
     <div class="container-fluid">
       <div class="row">
@@ -79,9 +77,16 @@ unset($_SESSION['office_edit_status'], $_SESSION['office_edit_message']);
           <div class="eg-panel p-3 mb-4">
             <h5 class="mb-3">Add New Office</h5>
             <form action="addoffice.php" method="post" class="row g-3">
-              <div class="col-md-4"><input class="form-control" name="name" placeholder="Office Name" required /></div>
-              <div class="col-md-4"><input class="form-control" name="address" placeholder="Location" required /></div>
-              <div class="col-md-3">
+              <div class="col-md-4">
+                <label class="form-label small mb-1">Office Name</label>
+                <input class="form-control" name="name" placeholder="Office Name" required />
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small mb-1">Location</label>
+                <input class="form-control" name="address" placeholder="Location" required />
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small mb-1">Team Leader</label>
                 <select class="form-select" name="team_leader_user_id">
                   <option value="">Select Team Leader (optional)</option>
                   <?php foreach ($admins as $admin): ?>
@@ -92,7 +97,17 @@ unset($_SESSION['office_edit_status'], $_SESSION['office_edit_message']);
                   <?php endforeach; ?>
                 </select>
               </div>
-              <div class="col-md-1 d-grid"><button type="submit" class="btn btn-primary">Add</button></div>
+              <div class="col-md-3">
+                <label class="form-label small mb-1">Time In</label>
+                <input type="time" class="form-control" name="time_in" required />
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small mb-1">Time Out</label>
+                <input type="time" class="form-control" name="time_out" required />
+              </div>
+              <div class="col-md-6 d-grid d-md-flex justify-content-md-end align-items-end">
+                <button type="submit" class="btn btn-primary">Add Office</button>
+              </div>
             </form>
           </div>
           <div class="eg-panel">
@@ -102,7 +117,7 @@ unset($_SESSION['office_edit_status'], $_SESSION['office_edit_message']);
             <?php else: ?>
               <div class="table-responsive">
                 <table class="table table-sm align-middle mb-0">
-                  <thead class="table-light"><tr><th>Name</th><th>Address</th><th>Team Leader</th><th></th></tr></thead>
+                  <thead class="table-light"><tr><th>Name</th><th>Address</th><th>Work Time</th><th>Team Leader</th><th></th></tr></thead>
                   <tbody>
                     <?php foreach ($offices as $o): ?>
                       <tr>
@@ -112,6 +127,13 @@ unset($_SESSION['office_edit_status'], $_SESSION['office_edit_message']);
                           </a>
                         </td>
                         <td><?= htmlspecialchars($o['address'] ?? '—') ?></td>
+                        <td>
+                          <?php if (!empty($o['time_in']) && !empty($o['time_out'])): ?>
+                            <?= date('h:i A', strtotime($o['time_in'])) ?> - <?= date('h:i A', strtotime($o['time_out'])) ?>
+                          <?php else: ?>
+                            —
+                          <?php endif; ?>
+                        </td>
                         <td><?= htmlspecialchars($o['team_leader'] ?: '—') ?></td>
                         <td class="text-end">
                           <button
@@ -152,6 +174,16 @@ unset($_SESSION['office_edit_status'], $_SESSION['office_edit_message']);
                 <div class="mb-3">
                   <label class="form-label">Address</label>
                   <input class="form-control" name="address" value="<?= htmlspecialchars($o['address'] ?? '') ?>" required />
+                </div>
+                <div class="row g-3 mb-3">
+                  <div class="col-6">
+                    <label class="form-label">Time In</label>
+                    <input type="time" class="form-control" name="time_in" value="<?= !empty($o['time_in']) ? date('H:i', strtotime($o['time_in'])) : '' ?>" required />
+                  </div>
+                  <div class="col-6">
+                    <label class="form-label">Time Out</label>
+                    <input type="time" class="form-control" name="time_out" value="<?= !empty($o['time_out']) ? date('H:i', strtotime($o['time_out'])) : '' ?>" required />
+                  </div>
                 </div>
                 <div class="mb-1">
                   <label class="form-label">Team Leader</label>
