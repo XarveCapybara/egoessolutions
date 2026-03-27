@@ -515,6 +515,17 @@ a:active,
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
 }
 
+/* Keep avatar circular when the name/email block is tall (flex row + narrow columns) */
+.eg-employee-card .d-flex.align-items-center > .eg-avatar-circle {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  box-sizing: border-box;
+}
+
 /* Employee profile / settings page */
 .eg-profile-page {
   background-color: #F9FAFB !important;

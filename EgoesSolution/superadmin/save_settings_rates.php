@@ -48,6 +48,11 @@ try {
     $hasRateType = $pdo->query("SHOW COLUMNS FROM employees LIKE 'rate_type'")->rowCount() > 0;
 
     if ($hasRateAmount && is_array($employeeRates)) {
+        // DB columns may be NOT NULL: store 0.00 and a non-null type when "use global default".
+        // Use 'hourly' so ENUM/VARCHAR schemas that only allow real types still accept the row; pay logic uses rate_amount > 0.
+        $rateUseDefault = '0.00';
+        $rateTypeUseDefault = 'hourly';
+
         if ($hasRateType) {
             $stmt = $pdo->prepare('UPDATE employees SET rate_amount = ?, rate_type = ? WHERE id = ?');
         } else {
@@ -62,16 +67,27 @@ try {
             $raw = trim((string) $raw);
             if ($raw === '') {
                 if ($hasRateType) {
-                    $stmt->execute([null, null, $empId]);
+                    $stmt->execute([$rateUseDefault, $rateTypeUseDefault, $empId]);
                 } else {
-                    $stmt->execute([null, $empId]);
+                    $stmt->execute([$rateUseDefault, $empId]);
                 }
                 continue;
             }
-            if (!is_numeric($raw)) {
+            $normalized = str_replace(["\xC2\xA0", ' '], '', $raw);
+            $normalized = str_replace(',', '.', $normalized);
+            if ($normalized === '' || !is_numeric($normalized)) {
                 continue;
             }
-            $amount = number_format((float) $raw, 2, '.', '');
+            $amountFloat = (float) $normalized;
+            if ($amountFloat <= 0) {
+                if ($hasRateType) {
+                    $stmt->execute([$rateUseDefault, $rateTypeUseDefault, $empId]);
+                } else {
+                    $stmt->execute([$rateUseDefault, $empId]);
+                }
+                continue;
+            }
+            $amount = number_format($amountFloat, 2, '.', '');
             if ($hasRateType) {
                 $stmt->execute([$amount, 'hourly', $empId]);
             } else {
@@ -83,8 +99,10 @@ try {
     $_SESSION['settings_status'] = 'success';
     $_SESSION['settings_message'] = 'Rate settings saved.';
 } catch (PDOException $e) {
+    error_log('[save_settings_rates] ' . $e->getMessage() . ' | ' . $e->getFile() . ':' . $e->getLine());
     $_SESSION['settings_status'] = 'error';
-    $_SESSION['settings_message'] = 'Could not save settings. Please try again.';
+    $_SESSION['settings_message'] = 'Could not save settings. Debug: ' . $e->getMessage()
+        . ' (SQLSTATE ' . $e->getCode() . ')';
 }
 
 header('Location: settings.php');

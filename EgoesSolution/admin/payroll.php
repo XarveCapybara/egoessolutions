@@ -34,7 +34,10 @@ if ($hasEmployeesTable && $userId > 0) {
         if ($empRow) {
             $employeeId = (int) ($empRow['id'] ?? 0);
             if ($empRow['rate_amount'] !== null && $empRow['rate_amount'] !== '') {
-                $hourlyRate = (float) $empRow['rate_amount'];
+                $candidate = (float) $empRow['rate_amount'];
+                if ($candidate > 0) {
+                    $hourlyRate = $candidate;
+                }
             }
         }
     } else {

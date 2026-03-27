@@ -40,7 +40,7 @@ if ($hasEmployeesTable) {
     $hasRateType = $pdo->query("SHOW COLUMNS FROM employees LIKE 'rate_type'")->rowCount() > 0;
 
     if ($hasRateAmount) {
-        $cols = 'e.id, e.employee_code, e.rate_amount, u.full_name, u.role, o.name AS office_name';
+        $cols = 'e.id, e.employee_code, e.rate_amount, u.full_name, u.email, u.role, u.office_id, o.name AS office_name';
         if ($hasRateType) {
             $cols .= ', e.rate_type';
         }
@@ -55,7 +55,7 @@ if ($hasEmployeesTable) {
         $employees = $stmt->fetchAll();
     } else {
         $stmt = $pdo->query("
-            SELECT e.id, e.employee_code, u.full_name, u.role, o.name AS office_name
+            SELECT e.id, e.employee_code, u.full_name, u.email, u.role, u.office_id, o.name AS office_name
             FROM employees e
             JOIN users u ON e.user_id = u.id
             LEFT JOIN offices o ON u.office_id = o.id
@@ -64,6 +64,13 @@ if ($hasEmployeesTable) {
         ");
         $employees = $stmt->fetchAll();
     }
+}
+
+$offices = [];
+try {
+    $offices = $pdo->query('SELECT id, name FROM offices ORDER BY name')->fetchAll();
+} catch (PDOException $e) {
+    $offices = [];
 }
 ?>
 <!DOCTYPE html>
@@ -127,7 +134,7 @@ ALTER TABLE employees ADD COLUMN rate_type VARCHAR(32) NULL DEFAULT NULL;</pre>
             </div>
           <?php endif; ?>
 
-          <form action="save_settings_rates.php" method="post" class="eg-panel p-4 mb-4">
+          <form id="settingsRatesForm" action="save_settings_rates.php" method="post" class="eg-panel p-4 mb-4">
             <h5 class="mb-3">Rates</h5>
             <p class="text-muted small mb-3">Global rate defaults stored in <code>app_settings</code>.</p>
             <div class="row g-3 align-items-end mb-2">
@@ -169,7 +176,44 @@ ALTER TABLE employees ADD COLUMN rate_type VARCHAR(32) NULL DEFAULT NULL;</pre>
             <?php if ($hasRateAmount && !empty($employees)): ?>
               <hr class="my-4" />
               <h5 class="mb-3">Per-user hourly rate</h5>
-              <p class="text-muted small mb-3">Overrides are saved for employee and admin accounts. Leave blank to clear. <code>rate_type</code> is set to <strong>hourly</strong> when a value is entered.</p>
+              <p class="text-muted small mb-3">Overrides are saved for employee and admin accounts. Leave blank or enter <strong>0</strong> to use the global default rate. <code>rate_type</code> is set to <strong>hourly</strong> when a positive value is entered.</p>
+              <div class="eg-panel p-3 mb-3 bg-light border-0">
+                <div class="row g-2 align-items-end flex-wrap">
+                  <div class="col-12 col-md-4 col-lg-3">
+                    <label for="js-settings-filter-office" class="form-label small text-muted mb-1">Office</label>
+                    <select id="js-settings-filter-office" class="form-select form-select-sm" aria-label="Filter by office">
+                      <option value="0">All offices</option>
+                      <option value="-1" selected>Unassigned</option>
+                      <?php foreach ($offices as $o): ?>
+                        <option value="<?= (int) $o['id'] ?>"><?= htmlspecialchars($o['name']) ?></option>
+                      <?php endforeach; ?>
+                    </select>
+                  </div>
+                  <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                    <label for="js-settings-filter-role" class="form-label small text-muted mb-1">Role</label>
+                    <select id="js-settings-filter-role" class="form-select form-select-sm" aria-label="Filter by role">
+                      <option value="">All</option>
+                      <option value="employee">Employee</option>
+                      <option value="admin">Team leader</option>
+                    </select>
+                  </div>
+                  <div class="col-12 col-md-5 col-lg-4">
+                    <label for="js-settings-filter-search" class="form-label small text-muted mb-1">Search</label>
+                    <input
+                      type="search"
+                      id="js-settings-filter-search"
+                      class="form-control form-control-sm"
+                      placeholder="Name, email, code, office…"
+                      autocomplete="off"
+                    />
+                  </div>
+                  <div class="col-auto d-flex gap-2 align-items-end">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="js-settings-filter-clear">Clear</button>
+                  </div>
+                </div>
+                <p class="text-muted small mb-0 mt-2">Filtering happens in the browser — no page reload.</p>
+              </div>
+              <p id="settingsRatesFilterNoMatches" class="text-muted small d-none mb-2">No one matches these filters. Try clearing filters.</p>
               <div class="table-responsive">
                 <table class="table table-sm align-middle mb-0" id="ratesSortTable">
                   <thead class="table-light">
@@ -181,12 +225,26 @@ ALTER TABLE employees ADD COLUMN rate_type VARCHAR(32) NULL DEFAULT NULL;</pre>
                       <th class="eg-sortable-th" scope="col" style="width: 220px;" title="Click to sort">Rate / hour</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody id="settingsRatesTableBody">
                     <?php foreach ($employees as $emp): ?>
                       <?php
                       $roleLabel = (($emp['role'] ?? '') === 'admin') ? 'Team leader' : 'Employee';
+                      $officeOid = (int) ($emp['office_id'] ?? 0);
+                      $rawHay = trim(
+                          ($emp['full_name'] ?? '')
+                          . ' ' . ($emp['email'] ?? '')
+                          . ' ' . ($emp['employee_code'] ?? '')
+                          . ' ' . $roleLabel
+                          . ' ' . ($emp['office_name'] ?? '')
+                      );
+                      $searchHay = function_exists('mb_strtolower') ? mb_strtolower($rawHay, 'UTF-8') : strtolower($rawHay);
                       ?>
-                      <tr>
+                      <tr
+                        class="eg-settings-rate-row"
+                        data-office-id="<?= $officeOid ?>"
+                        data-role="<?= htmlspecialchars((string) ($emp['role'] ?? 'employee'), ENT_QUOTES, 'UTF-8') ?>"
+                        data-search="<?= htmlspecialchars($searchHay, ENT_QUOTES, 'UTF-8') ?>"
+                      >
                         <td><?= htmlspecialchars($emp['full_name']) ?></td>
                         <td><span class="badge bg-secondary bg-opacity-25 text-dark"><?= htmlspecialchars($roleLabel) ?></span></td>
                         <td><?= htmlspecialchars($emp['office_name'] ?? '—') ?></td>
@@ -198,8 +256,11 @@ ALTER TABLE employees ADD COLUMN rate_type VARCHAR(32) NULL DEFAULT NULL;</pre>
                             min="0"
                             class="form-control form-control-sm"
                             name="rate_amount[<?= (int) $emp['id'] ?>]"
-                            value="<?= isset($emp['rate_amount']) && $emp['rate_amount'] !== null && $emp['rate_amount'] !== '' ? htmlspecialchars($emp['rate_amount']) : '' ?>"
-                            placeholder="—"
+                            value="<?php
+                            $ra = $emp['rate_amount'] ?? null;
+                            echo ($ra !== null && $ra !== '' && is_numeric($ra) && (float) $ra > 0) ? htmlspecialchars((string) $ra) : '';
+                            ?>"
+                            placeholder="Default"
                           />
                         </td>
                       </tr>
@@ -223,7 +284,72 @@ ALTER TABLE employees ADD COLUMN rate_type VARCHAR(32) NULL DEFAULT NULL;</pre>
       integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
       crossorigin="anonymous"
     ></script>
+    <script>
+      (function () {
+        const form = document.getElementById('settingsRatesForm');
+        if (!form) return;
+        form.addEventListener('submit', function () {
+          document.querySelectorAll('#settingsRatesTableBody tr.eg-settings-rate-row.d-none').forEach(function (tr) {
+            tr.classList.remove('d-none');
+          });
+        });
+      })();
+    </script>
     <?php if ($hasRateAmount && !empty($employees)): ?>
+      <script>
+        (function () {
+          const officeSel = document.getElementById('js-settings-filter-office');
+          const roleSel = document.getElementById('js-settings-filter-role');
+          const searchInp = document.getElementById('js-settings-filter-search');
+          const clearBtn = document.getElementById('js-settings-filter-clear');
+          const tbodyFilter = document.getElementById('settingsRatesTableBody');
+          const noMatches = document.getElementById('settingsRatesFilterNoMatches');
+          if (!officeSel || !roleSel || !searchInp || !tbodyFilter) return;
+
+          function applySettingsFilters() {
+            const rows = tbodyFilter.querySelectorAll('tr.eg-settings-rate-row');
+            const office = officeSel.value || '0';
+            const roleWant = (roleSel.value || '').trim();
+            const q = (searchInp.value || '').trim().toLowerCase();
+            let visible = 0;
+            rows.forEach(function (el) {
+              const oid = String(el.getAttribute('data-office-id') || '0');
+              let okOffice = false;
+              if (office === '0') {
+                okOffice = true;
+              } else if (office === '-1') {
+                okOffice = oid === '0';
+              } else {
+                okOffice = oid === office;
+              }
+              const roleRaw = (el.getAttribute('data-role') || 'employee').toLowerCase();
+              const okRole = roleWant === '' || roleRaw === roleWant;
+              const hay = (el.getAttribute('data-search') || '').toLowerCase();
+              const okSearch = q === '' || hay.indexOf(q) !== -1;
+              const show = okOffice && okRole && okSearch;
+              el.classList.toggle('d-none', !show);
+              if (show) visible += 1;
+            });
+            if (noMatches) {
+              noMatches.classList.toggle('d-none', visible !== 0);
+            }
+          }
+
+          officeSel.addEventListener('change', applySettingsFilters);
+          roleSel.addEventListener('change', applySettingsFilters);
+          searchInp.addEventListener('input', applySettingsFilters);
+          if (clearBtn) {
+            clearBtn.addEventListener('click', function () {
+              officeSel.value = '-1';
+              roleSel.value = '';
+              searchInp.value = '';
+              applySettingsFilters();
+              searchInp.focus();
+            });
+          }
+          applySettingsFilters();
+        })();
+      </script>
       <script>
         (function () {
           const table = document.getElementById('ratesSortTable');

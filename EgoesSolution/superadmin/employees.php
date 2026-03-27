@@ -9,16 +9,19 @@ $name = $_SESSION['display_name'] ?? 'Super Admin';
 require_once __DIR__ . '/../config/database.php';
 $hasPositionCol = $pdo->query("SHOW COLUMNS FROM employees LIKE 'position'")->rowCount() > 0;
 $positionSelect = $hasPositionCol ? ', e.position' : '';
-$stmt = $pdo->query("
-    SELECT u.id, u.full_name, u.email, u.role{$positionSelect}
+$selectedOfficeId = (int) ($_GET['office_id'] ?? 0);
+
+$sql = "
+    SELECT u.id, u.full_name, u.email, u.role, u.office_id, o.name AS office_name{$positionSelect}
     FROM users u
     LEFT JOIN employees e ON e.user_id = u.id
+    LEFT JOIN offices o ON u.office_id = o.id
     WHERE u.role IN ('employee', 'admin')
     ORDER BY u.full_name
-");
-$employees = $stmt->fetchAll();
+";
+$employees = $pdo->query($sql)->fetchAll();
+
 $offices = $pdo->query('SELECT id, name FROM offices ORDER BY name')->fetchAll();
-$selectedOfficeId = (int) ($_GET['office_id'] ?? 0);
 $selectedOfficeName = null;
 foreach ($offices as $office) {
     if ((int) $office['id'] === $selectedOfficeId) {
@@ -35,6 +38,9 @@ unset($_SESSION['team_leader_create_status'], $_SESSION['team_leader_create_mess
 $passwordUpdateStatus = $_SESSION['password_update_status'] ?? null;
 $passwordUpdateMessage = $_SESSION['password_update_message'] ?? null;
 unset($_SESSION['password_update_status'], $_SESSION['password_update_message']);
+$roleUpdateStatus = $_SESSION['role_update_status'] ?? null;
+$roleUpdateMessage = $_SESSION['role_update_message'] ?? null;
+unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -79,6 +85,12 @@ unset($_SESSION['password_update_status'], $_SESSION['password_update_message'])
               <?= htmlspecialchars($passwordUpdateMessage) ?>
             </div>
           <?php endif; ?>
+          <?php if (!empty($roleUpdateMessage)): ?>
+            <div class="alert <?= $roleUpdateStatus === 'success' ? 'alert-success' : 'alert-danger' ?> py-2">
+              <?= htmlspecialchars($roleUpdateMessage) ?>
+            </div>
+          <?php endif; ?>
+          <div id="js-employee-ajax-alert" class="alert d-none py-2" role="alert"></div>
           <div class="eg-panel p-3 mb-4">
             <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
               <h5 class="mb-0">Create Account</h5>
@@ -140,40 +152,108 @@ unset($_SESSION['password_update_status'], $_SESSION['password_update_message'])
               </form>
             </div>
           </div>
-          <div class="row g-3">
+
+          <div class="eg-panel p-3 mb-4">
+            <div class="row g-2 align-items-end flex-wrap">
+              <div class="col-12 col-md-4 col-lg-3">
+                <label for="js-filter-office" class="form-label small text-muted mb-1">Office</label>
+                <select id="js-filter-office" class="form-select form-select-sm" aria-label="Filter by office">
+                  <option value="0">All offices</option>
+                  <option value="-1" selected>Unassigned</option>
+                  <?php foreach ($offices as $o): ?>
+                    <option value="<?= (int) $o['id'] ?>"><?= htmlspecialchars($o['name']) ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+              <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                <label for="js-filter-role" class="form-label small text-muted mb-1">Role</label>
+                <select id="js-filter-role" class="form-select form-select-sm" aria-label="Filter by role">
+                  <option value="">All</option>
+                  <option value="employee">Employee</option>
+                  <option value="admin">Team leader</option>
+                </select>
+              </div>
+              <div class="col-12 col-md-5 col-lg-4">
+                <label for="js-filter-search" class="form-label small text-muted mb-1">Search</label>
+                <input
+                  type="search"
+                  id="js-filter-search"
+                  class="form-control form-control-sm"
+                  placeholder="Name or email (instant)…"
+                  autocomplete="off"
+                />
+              </div>
+              <div class="col-auto d-flex gap-2 align-items-end">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="js-filter-clear">Clear</button>
+              </div>
+            </div>
+            <p class="text-muted small mb-0 mt-2">Filtering happens in the browser — no page reload.</p>
+          </div>
+
+          <div class="row g-3" id="employee-grid">
             <?php if (empty($employees)): ?>
               <div class="col-12">
                 <p class="text-muted">No employees or team leaders yet. Create one above.</p>
               </div>
             <?php else: ?>
+              <div class="col-12 d-none" id="employee-filter-no-matches">
+                <p class="text-muted mb-0">No one matches these filters. Try clearing filters.</p>
+              </div>
               <?php foreach ($employees as $emp): ?>
                 <?php
                 $roleLabel = (($emp['role'] ?? '') === 'admin') ? 'Team leader' : 'Employee';
                 $positionText = ($hasPositionCol && !empty(trim((string) ($emp['position'] ?? '')))) ? trim($emp['position']) : '';
+                $rawHay = trim(($emp['full_name'] ?? '') . ' ' . ($emp['email'] ?? ''));
+                $searchHay = function_exists('mb_strtolower') ? mb_strtolower($rawHay, 'UTF-8') : strtolower($rawHay);
                 ?>
-                <div class="col-6 col-md-4 col-lg-3">
+                <div
+                  class="col-6 col-md-4 col-lg-3 eg-employee-filter-item"
+                  data-user-id="<?= (int) $emp['id'] ?>"
+                  data-office-id="<?= (int) ($emp['office_id'] ?? 0) ?>"
+                  data-role="<?= htmlspecialchars((string) ($emp['role'] ?? 'employee'), ENT_QUOTES, 'UTF-8') ?>"
+                  data-search="<?= htmlspecialchars($searchHay, ENT_QUOTES, 'UTF-8') ?>"
+                >
                   <div class="eg-employee-card position-relative">
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-outline-primary position-absolute top-0 end-0 m-2 d-inline-flex align-items-center justify-content-center"
-                      style="width: 32px; height: 32px;"
-                      data-bs-toggle="modal"
-                      data-bs-target="#changePasswordModal"
-                      data-user-id="<?= (int) $emp['id'] ?>"
-                      data-user-name="<?= htmlspecialchars($emp['full_name']) ?>"
-                      data-user-role="<?= htmlspecialchars($roleLabel) ?>"
-                      title="Change Password"
-                      aria-label="Change Password"
-                    >
-                      <i class="bi bi-key"></i>
-                    </button>
+                    <div class="position-absolute top-0 end-0 m-2 d-flex gap-1">
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center justify-content-center"
+                        style="width: 32px; height: 32px;"
+                        data-bs-toggle="modal"
+                        data-bs-target="#changeRoleModal"
+                        data-user-id="<?= (int) $emp['id'] ?>"
+                        data-user-name="<?= htmlspecialchars($emp['full_name']) ?>"
+                        data-user-role="<?= htmlspecialchars($emp['role'] ?? 'employee') ?>"
+                        title="Change Role"
+                        aria-label="Change Role"
+                      >
+                        <i class="bi bi-person-badge"></i>
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-primary d-inline-flex align-items-center justify-content-center"
+                        style="width: 32px; height: 32px;"
+                        data-bs-toggle="modal"
+                        data-bs-target="#changePasswordModal"
+                        data-user-id="<?= (int) $emp['id'] ?>"
+                        data-user-name="<?= htmlspecialchars($emp['full_name']) ?>"
+                        data-user-role="<?= htmlspecialchars($roleLabel) ?>"
+                        title="Change Password"
+                        aria-label="Change Password"
+                      >
+                        <i class="bi bi-key"></i>
+                      </button>
+                    </div>
                     <div class="d-flex align-items-center mb-2">
                       <div class="eg-avatar-circle me-2"></div>
-                      <div class="flex-grow-1 min-w-0">
+                      <div class="flex-grow-1 min-w-0 pe-5">
                         <div class="fw-semibold"><?= htmlspecialchars($emp['full_name']) ?></div>
                         <div class="text-muted small"><?= htmlspecialchars($emp['email']) ?></div>
                         <div class="mt-1">
-                          <span class="badge bg-secondary bg-opacity-25 text-dark small"><?= htmlspecialchars($roleLabel) ?></span>
+                          <span class="badge bg-secondary bg-opacity-25 text-dark small eg-js-role-badge"><?= htmlspecialchars($roleLabel) ?></span>
+                          <?php if (!empty($emp['office_name'])): ?>
+                            <span class="badge bg-light text-dark border small"><?= htmlspecialchars($emp['office_name']) ?></span>
+                          <?php endif; ?>
                           <?php if ($positionText !== ''): ?>
                             <span class="text-muted small ms-1"><?= htmlspecialchars($positionText) ?></span>
                           <?php endif; ?>
@@ -189,6 +269,34 @@ unset($_SESSION['password_update_status'], $_SESSION['password_update_message'])
       </div>
     </div>
 
+    <div class="modal fade" id="changeRoleModal" tabindex="-1" aria-labelledby="changeRoleModalLabel" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="changeRoleModalLabel">Change User Role</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <form id="formChangeRole" action="update_user_role.php" method="post">
+            <div class="modal-body">
+              <input type="hidden" name="user_id" id="roleModalUserId" value="" />
+              <div class="mb-2 text-muted small" id="roleModalTargetText"></div>
+              <div class="mb-0">
+                <label for="roleModalSelect" class="form-label">Role</label>
+                <select class="form-select" id="roleModalSelect" name="role" required>
+                  <option value="employee">Employee</option>
+                  <option value="admin">Team leader (admin)</option>
+                </select>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+              <button type="submit" class="btn btn-primary" id="formChangeRoleSubmit">Save Role</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
     <div class="modal fade" id="changePasswordModal" tabindex="-1" aria-labelledby="changePasswordModalLabel" aria-hidden="true">
       <div class="modal-dialog">
         <div class="modal-content">
@@ -196,7 +304,7 @@ unset($_SESSION['password_update_status'], $_SESSION['password_update_message'])
             <h5 class="modal-title" id="changePasswordModalLabel">Change User Password</h5>
             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
-          <form action="update_user_password.php" method="post">
+          <form id="formChangePassword" action="update_user_password.php" method="post">
             <div class="modal-body">
               <input type="hidden" name="user_id" id="passwordModalUserId" value="" />
               <div class="mb-2 text-muted small" id="passwordModalTargetText"></div>
@@ -212,7 +320,7 @@ unset($_SESSION['password_update_status'], $_SESSION['password_update_message'])
             </div>
             <div class="modal-footer">
               <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-              <button type="submit" class="btn btn-primary">Update Password</button>
+              <button type="submit" class="btn btn-primary" id="formChangePasswordSubmit">Update Password</button>
             </div>
           </form>
         </div>
@@ -230,19 +338,40 @@ unset($_SESSION['password_update_status'], $_SESSION['password_update_message'])
       const employeePanel = document.getElementById('employeeFormPanel');
       const teamLeaderPanel = document.getElementById('teamLeaderFormPanel');
 
-      employeeBtn.addEventListener('click', function () {
-        employeeBtn.classList.add('active');
-        teamLeaderBtn.classList.remove('active');
-        employeePanel.classList.remove('d-none');
-        teamLeaderPanel.classList.add('d-none');
-      });
+      if (employeeBtn && teamLeaderBtn && employeePanel && teamLeaderPanel) {
+        employeeBtn.addEventListener('click', function () {
+          employeeBtn.classList.add('active');
+          teamLeaderBtn.classList.remove('active');
+          employeePanel.classList.remove('d-none');
+          teamLeaderPanel.classList.add('d-none');
+        });
 
-      teamLeaderBtn.addEventListener('click', function () {
-        teamLeaderBtn.classList.add('active');
-        employeeBtn.classList.remove('active');
-        teamLeaderPanel.classList.remove('d-none');
-        employeePanel.classList.add('d-none');
-      });
+        teamLeaderBtn.addEventListener('click', function () {
+          teamLeaderBtn.classList.add('active');
+          employeeBtn.classList.remove('active');
+          teamLeaderPanel.classList.remove('d-none');
+          employeePanel.classList.add('d-none');
+        });
+      }
+
+      const changeRoleModal = document.getElementById('changeRoleModal');
+      if (changeRoleModal) {
+        changeRoleModal.addEventListener('show.bs.modal', function (event) {
+          const btn = event.relatedTarget;
+          if (!btn) return;
+          const userId = btn.getAttribute('data-user-id') || '';
+          const userName = btn.getAttribute('data-user-name') || 'User';
+          const roleRaw = (btn.getAttribute('data-user-role') || 'employee').toLowerCase();
+          const userIdInput = document.getElementById('roleModalUserId');
+          const targetText = document.getElementById('roleModalTargetText');
+          const roleSelect = document.getElementById('roleModalSelect');
+          if (userIdInput) userIdInput.value = userId;
+          if (targetText) targetText.textContent = 'Changing role for: ' + userName;
+          if (roleSelect) {
+            roleSelect.value = roleRaw === 'admin' ? 'admin' : 'employee';
+          }
+        });
+      }
 
       const changePasswordModal = document.getElementById('changePasswordModal');
       if (changePasswordModal) {
@@ -262,6 +391,167 @@ unset($_SESSION['password_update_status'], $_SESSION['password_update_message'])
           if (confirmPasswordInput) confirmPasswordInput.value = '';
         });
       }
+
+      (function () {
+        const officeSel = document.getElementById('js-filter-office');
+        const roleSel = document.getElementById('js-filter-role');
+        const searchInp = document.getElementById('js-filter-search');
+        const clearBtn = document.getElementById('js-filter-clear');
+        const items = document.querySelectorAll('.eg-employee-filter-item');
+        const noMatches = document.getElementById('employee-filter-no-matches');
+        if (!officeSel || !roleSel || !searchInp || items.length === 0) return;
+
+        function applyEmployeeFilters() {
+          const office = officeSel.value || '0';
+          const roleWant = (roleSel.value || '').trim();
+          const q = (searchInp.value || '').trim().toLowerCase();
+          let visible = 0;
+          items.forEach(function (el) {
+            const oid = String(el.getAttribute('data-office-id') || '0');
+            const roleRaw = (el.getAttribute('data-role') || 'employee').toLowerCase();
+            const hay = (el.getAttribute('data-search') || '').toLowerCase();
+            let okOffice = false;
+            if (office === '0') {
+              okOffice = true;
+            } else if (office === '-1') {
+              okOffice = oid === '0';
+            } else {
+              okOffice = oid === office;
+            }
+            const okRole = roleWant === '' || roleRaw === roleWant;
+            const okSearch = q === '' || hay.indexOf(q) !== -1;
+            const show = okOffice && okRole && okSearch;
+            el.classList.toggle('d-none', !show);
+            if (show) visible += 1;
+          });
+          if (noMatches) {
+            noMatches.classList.toggle('d-none', visible !== 0);
+          }
+        }
+
+        officeSel.addEventListener('change', applyEmployeeFilters);
+        roleSel.addEventListener('change', applyEmployeeFilters);
+        searchInp.addEventListener('input', applyEmployeeFilters);
+        if (clearBtn) {
+          clearBtn.addEventListener('click', function () {
+            officeSel.value = '-1';
+            roleSel.value = '';
+            searchInp.value = '';
+            applyEmployeeFilters();
+            searchInp.focus();
+          });
+        }
+        applyEmployeeFilters();
+        window.applyEmployeeFilters = applyEmployeeFilters;
+      })();
+
+      (function () {
+        const ajaxAlert = document.getElementById('js-employee-ajax-alert');
+        function showAjaxAlert(message, isError) {
+          if (!ajaxAlert) return;
+          ajaxAlert.textContent = message;
+          ajaxAlert.className = 'alert py-2 ' + (isError ? 'alert-danger' : 'alert-success');
+          ajaxAlert.classList.remove('d-none');
+          ajaxAlert.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+
+        async function postEmployeeForm(url, form) {
+          const res = await fetch(url, {
+            method: 'POST',
+            body: new FormData(form),
+            headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json' },
+            credentials: 'same-origin',
+          });
+          const ct = (res.headers.get('content-type') || '').toLowerCase();
+          if (!ct.includes('application/json')) {
+            throw new Error('Session may have expired. Refresh the page and try again.');
+          }
+          const data = await res.json();
+          return { res, data };
+        }
+
+        const roleForm = document.getElementById('formChangeRole');
+        const roleSubmit = document.getElementById('formChangeRoleSubmit');
+        const roleModalEl = document.getElementById('changeRoleModal');
+        if (roleForm && roleSubmit && roleModalEl) {
+          roleForm.addEventListener('submit', async function (e) {
+            e.preventDefault();
+            const prev = roleSubmit.textContent;
+            roleSubmit.disabled = true;
+            roleSubmit.textContent = 'Saving…';
+            try {
+              const { res, data } = await postEmployeeForm('update_user_role.php', roleForm);
+              if (!data || typeof data.ok === 'undefined') {
+                showAjaxAlert('Invalid response from server.', true);
+                return;
+              }
+              if (!data.ok) {
+                showAjaxAlert(data.message || 'Could not update role.', true);
+                return;
+              }
+              const uid = String(document.getElementById('roleModalUserId')?.value || '');
+              const card = document.querySelector('.eg-employee-filter-item[data-user-id="' + uid + '"]');
+              if (card && data.role) {
+                card.setAttribute('data-role', data.role);
+                const badge = card.querySelector('.eg-js-role-badge');
+                if (badge && data.role_label) {
+                  badge.textContent = data.role_label;
+                }
+                const rBtn = card.querySelector('[data-bs-target="#changeRoleModal"]');
+                const pBtn = card.querySelector('[data-bs-target="#changePasswordModal"]');
+                if (rBtn) rBtn.setAttribute('data-user-role', data.role);
+                if (pBtn && data.role_label) pBtn.setAttribute('data-user-role', data.role_label);
+              }
+              if (typeof window.applyEmployeeFilters === 'function') {
+                window.applyEmployeeFilters();
+              }
+              const inst = bootstrap.Modal.getInstance(roleModalEl);
+              if (inst) inst.hide();
+              showAjaxAlert(data.message || 'Role updated.', false);
+            } catch (err) {
+              showAjaxAlert(err.message || 'Network error.', true);
+            } finally {
+              roleSubmit.disabled = false;
+              roleSubmit.textContent = prev;
+            }
+          });
+        }
+
+        const pwdForm = document.getElementById('formChangePassword');
+        const pwdSubmit = document.getElementById('formChangePasswordSubmit');
+        const pwdModalEl = document.getElementById('changePasswordModal');
+        if (pwdForm && pwdSubmit && pwdModalEl) {
+          pwdForm.addEventListener('submit', async function (e) {
+            e.preventDefault();
+            const prev = pwdSubmit.textContent;
+            pwdSubmit.disabled = true;
+            pwdSubmit.textContent = 'Updating…';
+            try {
+              const { data } = await postEmployeeForm('update_user_password.php', pwdForm);
+              if (!data || typeof data.ok === 'undefined') {
+                showAjaxAlert('Invalid response from server.', true);
+                return;
+              }
+              if (!data.ok) {
+                showAjaxAlert(data.message || 'Could not update password.', true);
+                return;
+              }
+              const np = document.getElementById('new_password');
+              const cp = document.getElementById('confirm_password');
+              if (np) np.value = '';
+              if (cp) cp.value = '';
+              const inst = bootstrap.Modal.getInstance(pwdModalEl);
+              if (inst) inst.hide();
+              showAjaxAlert(data.message || 'Password updated.', false);
+            } catch (err) {
+              showAjaxAlert(err.message || 'Network error.', true);
+            } finally {
+              pwdSubmit.disabled = false;
+              pwdSubmit.textContent = prev;
+            }
+          });
+        }
+      })();
     </script>
   </body>
 </html>

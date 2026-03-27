@@ -47,7 +47,7 @@ $employeeListStmt->execute([$officeId]);
 $employees = $employeeListStmt->fetchAll();
 
 $assignableEmployeesStmt = $pdo->prepare('
-    SELECT u.id, u.full_name, u.email, o.name AS current_office
+    SELECT u.id, u.full_name, u.email, u.office_id AS current_office_id, o.name AS current_office
     FROM users u
     LEFT JOIN offices o ON u.office_id = o.id
     WHERE u.role = "employee" AND (u.office_id IS NULL OR u.office_id <> ?)
@@ -55,6 +55,8 @@ $assignableEmployeesStmt = $pdo->prepare('
 ');
 $assignableEmployeesStmt->execute([$officeId]);
 $assignableEmployees = $assignableEmployeesStmt->fetchAll();
+
+$officesForAddFilter = $pdo->query('SELECT id, name FROM offices ORDER BY name')->fetchAll();
 
 $attendanceToday = 0;
 $recentAttendance = [];
@@ -156,7 +158,7 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
             <div class="col-md-4">
               <div class="eg-metric-card">
                 <div class="text-muted small">Total Employees</div>
-                <div class="fw-bold fs-4"><?= $employeeCount ?></div>
+                <div class="fw-bold fs-4" id="officeEmployeeCount"><?= $employeeCount ?></div>
               </div>
             </div>
             <div class="col-md-4">
@@ -169,13 +171,14 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
 
           <div class="eg-panel p-3 mb-4">
             <h5 class="mb-3">Employees in This Office</h5>
+            <div id="officeEmployeesSection">
             <?php if (empty($employees)): ?>
-              <p class="text-muted small mb-0">No employees assigned to this office yet.</p>
+              <p id="officeEmployeesEmpty" class="text-muted small mb-0">No employees assigned to this office yet.</p>
             <?php else: ?>
               <div class="table-responsive">
                 <table class="table table-sm align-middle mb-0">
                   <thead class="table-light"><tr><th>Name</th><th>Email</th><th>Today Status</th></tr></thead>
-                  <tbody>
+                  <tbody id="officeEmployeesTableBody">
                     <?php foreach ($employees as $employee): ?>
                       <?php $isPresent = !empty($presentEmployeeEmails[$employee['email']]); ?>
                       <tr>
@@ -194,6 +197,7 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
                 </table>
               </div>
             <?php endif; ?>
+            </div>
           </div>
 
           <div class="eg-panel p-3">
@@ -235,20 +239,55 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
           <div class="modal-body">
+            <div id="addEmployeeAssignFeedback" class="alert py-2 d-none mb-3" role="alert"></div>
             <?php if (empty($assignableEmployees)): ?>
               <p class="text-muted small mb-0">No available employees to assign.</p>
             <?php else: ?>
+              <div class="row g-2 mb-2">
+                <div class="col-sm-6">
+                  <label for="addEmployeeOfficeFilter" class="form-label small text-muted mb-1">Office</label>
+                  <select id="addEmployeeOfficeFilter" class="form-select form-select-sm" aria-label="Filter by current office">
+                    <option value="0">All offices</option>
+                    <option value="-1">Unassigned</option>
+                    <?php foreach ($officesForAddFilter as $of): ?>
+                      <option value="<?= (int) $of['id'] ?>"><?= htmlspecialchars($of['name']) ?></option>
+                    <?php endforeach; ?>
+                  </select>
+                </div>
+                <div class="col-sm-6">
+                  <label for="addEmployeeSearch" class="form-label small text-muted mb-1">Search</label>
+                  <input
+                    type="search"
+                    id="addEmployeeSearch"
+                    class="form-control form-control-sm"
+                    placeholder="Name, email, or current office…"
+                    autocomplete="off"
+                    aria-label="Filter employees to add"
+                  />
+                </div>
+              </div>
+              <p id="addEmployeeNoMatches" class="text-muted small d-none mb-0">No employees match these filters.</p>
               <div class="table-responsive">
                 <table class="table table-sm align-middle mb-0">
                   <thead class="table-light"><tr><th>Name</th><th>Email</th><th>Current Office</th><th></th></tr></thead>
-                  <tbody>
+                  <tbody id="addEmployeeTableBody">
                     <?php foreach ($assignableEmployees as $candidate): ?>
-                      <tr>
+                      <?php
+                      $officeLabel = $candidate['current_office'] ?? '';
+                      $officeLabel = $officeLabel !== '' ? $officeLabel : 'Unassigned';
+                      $currentOfficeId = (int) ($candidate['current_office_id'] ?? 0);
+                      $rawHay = trim(($candidate['full_name'] ?? '') . ' ' . ($candidate['email'] ?? '') . ' ' . $officeLabel);
+                      $searchHay = function_exists('mb_strtolower') ? mb_strtolower($rawHay, 'UTF-8') : strtolower($rawHay);
+                      ?>
+                      <tr
+                        data-search="<?= htmlspecialchars($searchHay, ENT_QUOTES, 'UTF-8') ?>"
+                        data-office-id="<?= $currentOfficeId ?>"
+                      >
                         <td><?= htmlspecialchars($candidate['full_name']) ?></td>
                         <td><?= htmlspecialchars($candidate['email']) ?></td>
-                        <td><?= htmlspecialchars($candidate['current_office'] ?? 'Unassigned') ?></td>
+                        <td><?= htmlspecialchars($officeLabel) ?></td>
                         <td class="text-end">
-                          <form action="assign_employee_office.php" method="post" class="d-inline">
+                          <form action="assign_employee_office.php" method="post" class="d-inline js-assign-employee-form">
                             <input type="hidden" name="office_id" value="<?= (int) $office['id'] ?>" />
                             <input type="hidden" name="employee_user_id" value="<?= (int) $candidate['id'] ?>" />
                             <button type="submit" class="btn btn-sm btn-outline-primary">Add to This Office</button>
@@ -270,5 +309,170 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
       integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
       crossorigin="anonymous"
     ></script>
+    <script>
+      (function () {
+        const searchInput = document.getElementById('addEmployeeSearch');
+        const officeFilter = document.getElementById('addEmployeeOfficeFilter');
+        const tbody = document.getElementById('addEmployeeTableBody');
+        const noMatches = document.getElementById('addEmployeeNoMatches');
+        if (!searchInput || !tbody) return;
+
+        function applyAddEmployeeFilter() {
+          const rows = tbody.querySelectorAll('tr[data-search]');
+          const q = (searchInput.value || '').trim().toLowerCase();
+          const office = officeFilter ? officeFilter.value || '0' : '0';
+          let visible = 0;
+          rows.forEach(function (tr) {
+            const oid = String(tr.getAttribute('data-office-id') || '0');
+            let okOffice = false;
+            if (office === '0') {
+              okOffice = true;
+            } else if (office === '-1') {
+              okOffice = oid === '0';
+            } else {
+              okOffice = oid === office;
+            }
+            const hay = (tr.getAttribute('data-search') || '').toLowerCase();
+            const okSearch = q === '' || hay.indexOf(q) !== -1;
+            const show = okOffice && okSearch;
+            tr.classList.toggle('d-none', !show);
+            if (show) visible += 1;
+          });
+          if (noMatches) {
+            noMatches.classList.toggle('d-none', visible > 0 || rows.length === 0);
+          }
+        }
+
+        searchInput.addEventListener('input', applyAddEmployeeFilter);
+        if (officeFilter) {
+          officeFilter.addEventListener('change', applyAddEmployeeFilter);
+        }
+        window.applyAddEmployeeFilter = applyAddEmployeeFilter;
+
+        const modal = document.getElementById('addEmployeeModal');
+        if (modal) {
+          modal.addEventListener('shown.bs.modal', function () {
+            searchInput.value = '';
+            if (officeFilter) officeFilter.value = '0';
+            applyAddEmployeeFilter();
+            searchInput.focus();
+            const fb = document.getElementById('addEmployeeAssignFeedback');
+            if (fb) {
+              fb.classList.add('d-none');
+              fb.textContent = '';
+            }
+          });
+        }
+      })();
+
+      (function () {
+        const modalBody = document.querySelector('#addEmployeeModal .modal-body');
+        const feedback = document.getElementById('addEmployeeAssignFeedback');
+        const countEl = document.getElementById('officeEmployeeCount');
+        const section = document.getElementById('officeEmployeesSection');
+
+        function showAssignFeedback(message, isError) {
+          if (!feedback) return;
+          feedback.textContent = message;
+          feedback.className = 'alert py-2 mb-3 ' + (isError ? 'alert-danger' : 'alert-success');
+          feedback.classList.remove('d-none');
+        }
+
+        function appendEmployeeToOfficeTable(fullName, email) {
+          if (!section) return;
+          let tbody = document.getElementById('officeEmployeesTableBody');
+          const empty = document.getElementById('officeEmployeesEmpty');
+          if (empty) {
+            empty.remove();
+            const wrap = document.createElement('div');
+            wrap.className = 'table-responsive';
+            wrap.innerHTML =
+              '<table class="table table-sm align-middle mb-0">' +
+              '<thead class="table-light"><tr><th>Name</th><th>Email</th><th>Today Status</th></tr></thead>' +
+              '<tbody id="officeEmployeesTableBody"></tbody></table>';
+            section.appendChild(wrap);
+            tbody = document.getElementById('officeEmployeesTableBody');
+          }
+          if (!tbody) return;
+          const tr = document.createElement('tr');
+          const esc = function (s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+          };
+          tr.innerHTML =
+            '<td>' +
+            esc(fullName) +
+            '</td><td>' +
+            esc(email) +
+            '</td><td><span class="badge text-bg-secondary">Absent</span></td>';
+          tbody.appendChild(tr);
+        }
+
+        function bumpEmployeeCount() {
+          if (!countEl) return;
+          const n = parseInt(countEl.textContent, 10);
+          countEl.textContent = String(isNaN(n) ? 1 : n + 1);
+        }
+
+        if (!modalBody) return;
+
+        modalBody.addEventListener('submit', async function (e) {
+          const form = e.target;
+          if (!form || !form.classList.contains('js-assign-employee-form')) return;
+          e.preventDefault();
+
+          const row = form.closest('tr');
+          const nameCell = row ? row.querySelector('td') : null;
+          const emailCell = row && row.cells.length > 1 ? row.cells[1] : null;
+          const fullName = nameCell ? nameCell.textContent.trim() : '';
+          const email = emailCell ? emailCell.textContent.trim() : '';
+
+          const btn = form.querySelector('[type="submit"]');
+          const prev = btn ? btn.textContent : '';
+          if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Adding…';
+          }
+
+          try {
+            const res = await fetch('assign_employee_office.php', {
+              method: 'POST',
+              body: new FormData(form),
+              headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json' },
+              credentials: 'same-origin',
+            });
+            const ct = (res.headers.get('content-type') || '').toLowerCase();
+            if (!ct.includes('application/json')) {
+              showAssignFeedback('Session may have expired. Refresh the page and try again.', true);
+              return;
+            }
+            const data = await res.json();
+            if (!data || typeof data.ok === 'undefined') {
+              showAssignFeedback('Invalid response from server.', true);
+              return;
+            }
+            if (!data.ok) {
+              showAssignFeedback(data.message || 'Could not add employee.', true);
+              return;
+            }
+            showAssignFeedback(data.message || 'Added to office successfully.', false);
+            if (row) row.remove();
+            bumpEmployeeCount();
+            appendEmployeeToOfficeTable(fullName, email);
+            if (typeof window.applyAddEmployeeFilter === 'function') {
+              window.applyAddEmployeeFilter();
+            }
+          } catch (err) {
+            showAssignFeedback(err.message || 'Network error.', true);
+          } finally {
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = prev;
+            }
+          }
+        });
+      })();
+    </script>
   </body>
 </html>
