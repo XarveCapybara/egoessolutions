@@ -78,6 +78,7 @@ if ($hasAppSettingsTable) {
 }
 
 $payrollRows = [];
+$employeeDetailsMap = [];
 $totalGross = 0.0;
 $totalDeductions = 0.0;
 $totalNet = 0.0;
@@ -92,6 +93,7 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
     $sql = "
         SELECT
             al.employee_id,
+            al.log_date,
             al.time_in,
             al.time_out,
             {$selectDeduction},
@@ -139,11 +141,23 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
         $byEmployee[$eid]['worked_minutes'] += $workedMinutes;
 
         $rowDeduction = (float) ($row['deduction_amount'] ?? 0);
+        $lateMinutes = (int) ($row['late_minutes'] ?? 0);
         if ($rowDeduction <= 0 && $deductionPerMinute > 0 && $hasLateMinutesColumn) {
-            $lateMinutes = (int) ($row['late_minutes'] ?? 0);
             $rowDeduction = max(0, $lateMinutes - 60) * $deductionPerMinute;
         }
         $byEmployee[$eid]['deductions'] += $rowDeduction;
+
+        if (!isset($employeeDetailsMap[$eid])) {
+            $employeeDetailsMap[$eid] = [];
+        }
+        $employeeDetailsMap[$eid][] = [
+            'date' => (string) ($row['log_date'] ?? ''),
+            'time_in' => (string) ($row['time_in'] ?? ''),
+            'time_out' => (string) ($row['time_out'] ?? ''),
+            'worked_minutes' => $workedMinutes,
+            'late_minutes' => $lateMinutes,
+            'deduction_amount' => $rowDeduction,
+        ];
     }
 
     foreach ($byEmployee as $eid => $agg) {
@@ -180,6 +194,43 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
     usort($payrollRows, function ($a, $b) {
         return strcmp($a['full_name'], $b['full_name']);
     });
+
+    $egFormatPayrollDetailTime = static function (string $ts): string {
+        if ($ts === '') {
+            return '-';
+        }
+        $norm = str_replace(' ', 'T', $ts);
+        $dt = date_create($norm);
+        return $dt ? $dt->format('g:i A') : $ts;
+    };
+
+    $payrollDetailRowsHtmlById = [];
+    foreach ($employeeDetailsMap as $eid => $rows) {
+        $parts = [];
+        foreach ($rows as $r) {
+            $dateStr = (string) ($r['date'] ?? '');
+            $dateLabel = '-';
+            if ($dateStr !== '') {
+                $d = DateTimeImmutable::createFromFormat('Y-m-d', $dateStr);
+                $dateLabel = $d ? $d->format('M j, Y') : $dateStr;
+            }
+            $tin = $egFormatPayrollDetailTime((string) ($r['time_in'] ?? ''));
+            $tout = $egFormatPayrollDetailTime((string) ($r['time_out'] ?? ''));
+            $workedH = number_format(((float) ($r['worked_minutes'] ?? 0)) / 60.0, 2, '.', '');
+            $lateM = (string) (int) ($r['late_minutes'] ?? 0);
+            $dedAmt = number_format((float) ($r['deduction_amount'] ?? 0), 2, '.', '');
+            $parts[] =
+                '<tr><td>' . htmlspecialchars($dateLabel, ENT_QUOTES, 'UTF-8') . '</td>' .
+                '<td>' . htmlspecialchars($tin, ENT_QUOTES, 'UTF-8') . '</td>' .
+                '<td>' . htmlspecialchars($tout, ENT_QUOTES, 'UTF-8') . '</td>' .
+                '<td class="text-end">' . htmlspecialchars($workedH, ENT_QUOTES, 'UTF-8') . '</td>' .
+                '<td class="text-end">' . htmlspecialchars($lateM, ENT_QUOTES, 'UTF-8') . '</td>' .
+                '<td class="text-end">' . htmlspecialchars($dedAmt, ENT_QUOTES, 'UTF-8') . '</td></tr>';
+        }
+        $payrollDetailRowsHtmlById[$eid] = implode('', $parts);
+    }
+} else {
+    $payrollDetailRowsHtmlById = [];
 }
 
 try {
@@ -231,6 +282,10 @@ foreach ($payrollRows as $pr) {
     }
 }
 $isMonthPeriod = ($period === 'month');
+$payrollDetailRowsHtmlJson = json_encode(
+    (object) $payrollDetailRowsHtmlById,
+    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT
+);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -372,14 +427,30 @@ $isMonthPeriod = ($period === 'month');
                       <th class="text-end">Gross</th>
                       <th class="text-end">Deductions</th>
                       <th class="text-end">Net</th>
+                      <th class="text-center" style="width: 4rem;">Payslip</th>
                       <th style="min-width: 11rem;">Receipt</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody id="payrollEmployeeTableBody">
                     <?php foreach ($payrollRows as $pr): ?>
                       <?php $recv = ($pr['receipt_status'] ?? 'pending') === 'received'; ?>
                       <tr>
-                        <td><?= htmlspecialchars($pr['full_name']) ?></td>
+                        <td>
+                          <button
+                            type="button"
+                            class="btn btn-link p-0 align-baseline text-start text-decoration-none js-open-payroll-detail"
+                            data-employee-id="<?= (int) $pr['employee_id'] ?>"
+                            data-employee-name="<?= htmlspecialchars($pr['full_name'], ENT_QUOTES, 'UTF-8') ?>"
+                            data-office="<?= htmlspecialchars($pr['office_name'], ENT_QUOTES, 'UTF-8') ?>"
+                            data-hourly-rate="<?= number_format((float) $pr['hourly_rate'], 2, '.', '') ?>"
+                            data-hours="<?= number_format((float) $pr['hours'], 2, '.', '') ?>"
+                            data-gross="<?= number_format((float) $pr['gross'], 2, '.', '') ?>"
+                            data-deductions="<?= number_format((float) $pr['deductions'], 2, '.', '') ?>"
+                            data-net="<?= number_format((float) $pr['net'], 2, '.', '') ?>"
+                          >
+                            <?= htmlspecialchars($pr['full_name']) ?>
+                          </button>
+                        </td>
                         <td><?= htmlspecialchars($pr['office_name']) ?></td>
                         <td class="text-end"><?= number_format($pr['hourly_rate'], 2) ?></td>
                         <td class="text-end"><?= number_format($pr['hours'], 2) ?></td>
@@ -407,6 +478,40 @@ $isMonthPeriod = ($period === 'month');
               </div>
             <?php endif; ?>
           </div>
+
+          <div class="modal" id="payrollDetailModal" tabindex="-1" aria-labelledby="payrollDetailModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-xl modal-dialog-scrollable">
+              <div class="modal-content">
+                <div class="modal-header">
+                  <h5 class="modal-title" id="payrollDetailModalLabel">Employee Payslip Details</h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                  <div class="mb-2"><strong id="pdEmployeeName">-</strong> <span class="text-muted" id="pdOffice"></span></div>
+                  <div class="small text-muted mb-3" id="pdPeriod"></div>
+                  <div class="row g-2 mb-3">
+                    <div class="col-6 col-md-3"><div class="small text-muted">Rate</div><div id="pdRate" class="fw-semibold">0.00</div></div>
+                    <div class="col-6 col-md-3"><div class="small text-muted">Hours</div><div id="pdHours" class="fw-semibold">0.00</div></div>
+                    <div class="col-6 col-md-2"><div class="small text-muted">Gross</div><div id="pdGross" class="fw-semibold">0.00</div></div>
+                    <div class="col-6 col-md-2"><div class="small text-muted">Deduction</div><div id="pdDed" class="fw-semibold">0.00</div></div>
+                    <div class="col-6 col-md-2"><div class="small text-muted">Net</div><div id="pdNet" class="fw-semibold">0.00</div></div>
+                  </div>
+                  <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0">
+                      <thead class="table-light">
+                        <tr><th>Date</th><th>Time In</th><th>Time Out</th><th class="text-end">Worked</th><th class="text-end">Late (min)</th><th class="text-end">Deduction</th></tr>
+                      </thead>
+                      <tbody id="pdRows"></tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="modal-footer">
+                  <a id="pdPrintPayslip" class="btn btn-primary" href="#" target="_blank" rel="noopener">Print payslip</a>
+                  <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+              </div>
+            </div>
+          </div>
         </main>
       </div>
     </div>
@@ -431,6 +536,55 @@ $isMonthPeriod = ($period === 'month');
 
         periodSelect.addEventListener('change', syncPeriodUi);
         syncPeriodUi();
+      })();
+
+      (function () {
+        const detailRowsHtml = <?= $payrollDetailRowsHtmlJson ?: '{}' ?>;
+        const modalEl = document.getElementById('payrollDetailModal');
+        const tableBody = document.getElementById('payrollEmployeeTableBody');
+        if (!modalEl || !tableBody) return;
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        const rowsEl = document.getElementById('pdRows');
+        const nameEl = document.getElementById('pdEmployeeName');
+        const officeEl = document.getElementById('pdOffice');
+        const rateEl = document.getElementById('pdRate');
+        const hoursEl = document.getElementById('pdHours');
+        const grossEl = document.getElementById('pdGross');
+        const dedEl = document.getElementById('pdDed');
+        const netEl = document.getElementById('pdNet');
+        const periodEl = document.getElementById('pdPeriod');
+        const periodLabel = <?= json_encode($periodSummaryLabel, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
+        const payslipBase = new URLSearchParams({
+          period: <?= json_encode($period, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>,
+          week: <?= json_encode($weekStartStr, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>,
+          month: <?= json_encode($monthValueForInput, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>,
+          office_id: String(<?= (int) $officeFilter ?>),
+        });
+        const pdPrintPayslip = document.getElementById('pdPrintPayslip');
+        const emptyRow =
+          '<tr><td colspan="6" class="text-muted text-center">No logs for this period.</td></tr>';
+
+        tableBody.addEventListener('click', function (e) {
+          const btn = e.target.closest('.js-open-payroll-detail');
+          if (!btn) return;
+          const id = String(btn.getAttribute('data-employee-id') || '');
+          if (pdPrintPayslip) {
+            payslipBase.set('employee_id', id);
+            pdPrintPayslip.href = 'payslip_print.php?' + payslipBase.toString();
+          }
+          const html = detailRowsHtml[id];
+          nameEl.textContent = btn.getAttribute('data-employee-name') || 'Employee';
+          const office = btn.getAttribute('data-office') || '';
+          officeEl.textContent = office ? '(' + office + ')' : '';
+          if (periodEl) periodEl.textContent = 'Period: ' + periodLabel;
+          rateEl.textContent = btn.getAttribute('data-hourly-rate') || '0.00';
+          hoursEl.textContent = btn.getAttribute('data-hours') || '0.00';
+          grossEl.textContent = btn.getAttribute('data-gross') || '0.00';
+          dedEl.textContent = btn.getAttribute('data-deductions') || '0.00';
+          netEl.textContent = btn.getAttribute('data-net') || '0.00';
+          rowsEl.innerHTML = html && html.length ? html : emptyRow;
+          modal.show();
+        });
       })();
     </script>
   </body>

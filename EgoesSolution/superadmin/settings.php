@@ -7,6 +7,7 @@ if (($_SESSION['role'] ?? '') !== 'superadmin') {
 $name = $_SESSION['display_name'] ?? 'Super Admin';
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/payroll_deduction_types.php';
 
 $settingsStatus = $_SESSION['settings_status'] ?? null;
 $settingsMessage = $_SESSION['settings_message'] ?? null;
@@ -33,6 +34,16 @@ try {
     }
 } catch (PDOException $e) {
     // app_settings may not exist yet
+}
+
+$payrollDeductionTypes = [];
+try {
+    eg_ensure_payroll_deduction_types($pdo);
+    $payrollDeductionTypes = $pdo
+        ->query('SELECT id, label, default_amount FROM payroll_deduction_types ORDER BY id ASC')
+        ->fetchAll();
+} catch (Throwable $e) {
+    $payrollDeductionTypes = [];
 }
 
 if ($hasEmployeesTable) {
@@ -275,6 +286,62 @@ ALTER TABLE employees ADD COLUMN rate_type VARCHAR(32) NULL DEFAULT NULL;</pre>
             <div class="mt-4">
               <button type="submit" class="btn btn-primary">Save settings</button>
             </div>
+          </form>
+
+          <form action="save_payroll_deduction_types.php" method="post" class="eg-panel p-4 mb-4">
+            <h5 class="mb-2">Payroll deduction lines</h5>
+            <p class="text-muted small mb-3">
+              Labels and default amounts shown on printable payslips (SSS, PhilHealth, etc.). Stored in <code>payroll_deduction_types</code>.
+            </p>
+            <?php if (empty($payrollDeductionTypes)): ?>
+              <p class="text-muted small mb-0">Could not load deduction lines. Check the database connection or run <code>scripts/create_payroll_deduction_types.sql</code>.</p>
+            <?php else: ?>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Label</th>
+                      <th style="width: 9rem;">Amount (PHP)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <?php foreach ($payrollDeductionTypes as $dt): ?>
+                      <?php $did = (int) ($dt['id'] ?? 0); ?>
+                      <tr>
+                        <td>
+                          <input type="text" class="form-control form-control-sm" name="row[<?= $did ?>][label]" value="<?= htmlspecialchars((string) ($dt['label'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" required maxlength="128" />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            class="form-control form-control-sm"
+                            name="row[<?= $did ?>][amount]"
+                            value="<?= htmlspecialchars(number_format((float) ($dt['default_amount'] ?? 0), 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>"
+                          />
+                        </td>
+                      </tr>
+                    <?php endforeach; ?>
+                  </tbody>
+                </table>
+              </div>
+              <hr class="my-3" />
+              <h6 class="mb-2">Add line</h6>
+              <div class="row g-2 align-items-end flex-wrap">
+                <div class="col-md-5">
+                  <label class="form-label small text-muted mb-1">Label</label>
+                  <input type="text" name="new_label" class="form-control form-control-sm" maxlength="128" placeholder="e.g. SSS Contribution" />
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label small text-muted mb-1">Amount (PHP)</label>
+                  <input type="number" name="new_amount" class="form-control form-control-sm" step="0.01" min="0" value="0" />
+                </div>
+              </div>
+              <div class="mt-3">
+                <button type="submit" class="btn btn-primary">Save deduction lines</button>
+              </div>
+            <?php endif; ?>
           </form>
         </main>
       </div>

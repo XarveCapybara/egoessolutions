@@ -1,0 +1,252 @@
+/* Printable payslip — E-Goes template style (screen + print) */
+:root {
+  --eg-payslip-border: #000;
+  --eg-payslip-fill: #f5e6d8;
+  --eg-payslip-fill-alt: #faf4ef;
+}
+
+body.eg-payslip-body {
+  margin: 0;
+  padding: 1rem;
+  background: #e9ecef;
+  font-family: Georgia, "Times New Roman", Times, serif;
+  font-size: 11px;
+  color: #111;
+}
+
+.eg-payslip-toolbar {
+  max-width: 900px;
+  margin: 0 auto 1rem;
+}
+
+.eg-payslip-sheet {
+  max-width: 900px;
+  margin: 0 auto;
+  background: #fff;
+  border: 3px solid var(--eg-payslip-border);
+  padding: 14px 16px 18px;
+  box-sizing: border-box;
+}
+
+.eg-payslip-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 2px solid var(--eg-payslip-border);
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+}
+
+.eg-payslip-brand {
+  display: block;
+}
+
+.eg-payslip-company-name {
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 0.02em;
+}
+
+.eg-payslip-address {
+  font-size: 10px;
+  margin-top: 2px;
+  max-width: 280px;
+  line-height: 1.35;
+}
+
+.eg-payslip-title {
+  font-size: 22px;
+  font-weight: 700;
+  align-self: center;
+}
+
+.eg-payslip-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .eg-payslip-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.eg-payslip-box {
+  border: 2px solid var(--eg-payslip-border);
+  padding: 8px 10px;
+}
+
+.eg-payslip-box-title {
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+
+.eg-payslip-field {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 6px;
+  font-size: 10px;
+  margin-bottom: 4px;
+  align-items: baseline;
+}
+
+.eg-payslip-field label {
+  font-weight: 600;
+}
+
+.eg-payslip-field-value {
+  border-bottom: 1px solid #333;
+  min-height: 1.2em;
+  padding: 1px 4px;
+}
+
+.eg-payslip-field-value--name {
+  background: var(--eg-payslip-fill);
+}
+
+.eg-payslip-earnings,
+.eg-payslip-deductions-inner {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.eg-payslip-earnings th,
+.eg-payslip-earnings td,
+.eg-payslip-deductions-inner th,
+.eg-payslip-deductions-inner td {
+  border: 1px solid var(--eg-payslip-border);
+  padding: 4px 6px;
+}
+
+.eg-payslip-earnings thead th,
+.eg-payslip-deductions-inner thead th {
+  background: var(--eg-payslip-fill-alt);
+  font-weight: 700;
+}
+
+.eg-payslip-earnings tbody tr:nth-child(even) td,
+.eg-payslip-deductions-inner tbody tr:nth-child(even) td {
+  background: var(--eg-payslip-fill-alt);
+}
+
+.eg-payslip-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.eg-payslip-strike {
+  text-decoration: line-through;
+  color: #555;
+}
+
+.eg-payslip-bold {
+  font-weight: 700;
+}
+
+.eg-payslip-net-inner .eg-payslip-bold {
+  font-weight: 700;
+  font-size: 10px;
+}
+
+.eg-payslip-error-msg {
+  margin: 0;
+}
+
+.eg-payslip-net-box {
+  border: 2px solid var(--eg-payslip-border);
+  margin-top: 10px;
+  padding: 8px;
+}
+
+.eg-payslip-net-inner {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  font-size: 10px;
+}
+
+.eg-payslip-net-total {
+  margin-top: 10px;
+  border: 2px solid var(--eg-payslip-border);
+  padding: 12px;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 700;
+  background: var(--eg-payslip-fill-alt);
+}
+
+.eg-payslip-footer {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  font-size: 10px;
+}
+
+@media (max-width: 720px) {
+  .eg-payslip-footer {
+    grid-template-columns: 1fr;
+  }
+}
+
+.eg-payslip-sign-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.eg-payslip-sign-block {
+  text-align: center;
+}
+
+.eg-payslip-sign-line {
+  border-bottom: 1px solid #000;
+  min-height: 28px;
+  margin: 4px 0 2px;
+}
+
+.eg-payslip-ack {
+  border: 2px solid var(--eg-payslip-border);
+  padding: 8px 10px;
+}
+
+.eg-payslip-ack h4 {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin: 0 0 6px;
+}
+
+.eg-payslip-ack p {
+  margin: 0 0 8px;
+  line-height: 1.4;
+}
+
+@media print {
+  body.eg-payslip-body {
+    background: #fff;
+    padding: 0;
+  }
+
+  .eg-payslip-toolbar {
+    display: none !important;
+  }
+
+  .eg-payslip-sheet {
+    border: 3px solid #000;
+    max-width: none;
+    margin: 0;
+    padding: 10mm 12mm;
+  }
+
+  @page {
+    size: A4;
+    margin: 10mm;
+  }
+}

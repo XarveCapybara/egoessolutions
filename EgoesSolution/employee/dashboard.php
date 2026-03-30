@@ -27,6 +27,7 @@ $daysInMonth = (int) $monthStart->format('t');
 $firstWeekday = (int) $monthStart->format('w'); // 0=Sun, 6=Sat
 $lateThreshold = '09:00:00';
 $attendanceByDate = [];
+$attendanceDetailsByDate = [];
 $employeeId = 0;
 $hasEmployeesTable = $pdo->query("SHOW TABLES LIKE 'employees'")->rowCount() > 0;
 $hasAttendanceLogs = $pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount() > 0;
@@ -122,17 +123,37 @@ if ($hasAttendanceLogs && $employeeId > 0) {
     }
     $weeklyNet = $weeklyGross - $weeklyDeductions;
 
-    $logsStmt = $pdo->prepare('
-        SELECT log_date, time_in, time_out
+    $logsStmt = $pdo->prepare("
+        SELECT log_date, time_in, time_out, {$selectDeduction}, {$selectLateMinutes}
         FROM attendance_logs
         WHERE employee_id = ? AND office_id = ? AND log_date BETWEEN ? AND ?
         ORDER BY log_date DESC, id DESC
-    ');
+    ");
     $logsStmt->execute([$employeeId, $officeId, $monthStart->format('Y-m-d'), $monthEnd->format('Y-m-d')]);
     foreach ($logsStmt->fetchAll() as $row) {
         $dateKey = (string) $row['log_date'];
         if (!isset($attendanceByDate[$dateKey])) {
-            $attendanceByDate[$dateKey] = $row;
+            $workedMinutes = 0;
+            if (!empty($row['time_in']) && !empty($row['time_out'])) {
+                $inTs = strtotime((string) $row['time_in']);
+                $outTs = strtotime((string) $row['time_out']);
+                if ($outTs > $inTs) {
+                    $workedMinutes = (int) floor(($outTs - $inTs) / 60);
+                }
+            }
+            $lateMinutes = (int) ($row['late_minutes'] ?? 0);
+            $rowDeduction = (float) ($row['deduction_amount'] ?? 0);
+            if ($rowDeduction <= 0 && $deductionPerMinute > 0) {
+                $rowDeduction = max(0, $lateMinutes - 60) * $deductionPerMinute;
+            }
+            $attendanceByDate[$dateKey] = [
+                'log_date' => $dateKey,
+                'time_in' => $row['time_in'] ?? null,
+                'time_out' => $row['time_out'] ?? null,
+                'late_minutes' => $lateMinutes,
+                'deduction_amount' => $rowDeduction,
+                'worked_minutes' => $workedMinutes,
+            ];
         }
     }
 }
@@ -168,7 +189,26 @@ for ($day = 1; $day <= $daysInMonth; $day++) {
         'status_class' => $statusClass,
         'is_today' => $dateKey === $today->format('Y-m-d'),
     ];
+    $dayAttendance = $attendanceByDate[$dateKey] ?? null;
+    $attendanceDetailsByDate[$dateKey] = [
+        'date' => $dateKey,
+        'date_label' => $dateObj->format('M j, Y'),
+        'status' => $status ?? ($dateObj > $today ? 'Future' : 'Absent'),
+        'time_in' => $dayAttendance['time_in'] ?? null,
+        'time_out' => $dayAttendance['time_out'] ?? null,
+        'late_minutes' => (int) ($dayAttendance['late_minutes'] ?? 0),
+        'deduction_amount' => (float) ($dayAttendance['deduction_amount'] ?? 0),
+        'worked_minutes' => (int) ($dayAttendance['worked_minutes'] ?? 0),
+        'time_in_label' => !empty($dayAttendance['time_in']) ? date('h:i A', strtotime((string) $dayAttendance['time_in'])) : '-',
+        'time_out_label' => !empty($dayAttendance['time_out']) ? date('h:i A', strtotime((string) $dayAttendance['time_out'])) : '-',
+        'hours_label' => number_format(((int) ($dayAttendance['worked_minutes'] ?? 0)) / 60, 2),
+        'deduction_label' => number_format((float) ($dayAttendance['deduction_amount'] ?? 0), 2),
+    ];
 }
+$attendanceDetailsJson = json_encode(
+    $attendanceDetailsByDate,
+    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT
+);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -210,6 +250,12 @@ for ($day = 1; $day <= $daysInMonth; $day++) {
         display: flex;
         align-items: center;
         justify-content: center;
+      }
+      .eg-calendar-day[data-date] {
+        cursor: pointer;
+      }
+      .eg-calendar-day[data-date]:hover {
+        background: #f8fafc;
       }
       .eg-calendar-day-number {
         font-size: 1rem;
@@ -346,12 +392,16 @@ for ($day = 1; $day <= $daysInMonth; $day++) {
               <div class="eg-calendar-head">Sat</div>
             </div>
 
-            <div class="eg-calendar-grid">
+            <div class="eg-calendar-grid" id="attendanceCalendarGrid">
               <?php foreach ($calendarCells as $cell): ?>
                 <?php if ($cell === null): ?>
                   <div class="eg-calendar-empty"></div>
                 <?php else: ?>
-                  <div class="eg-calendar-day <?= $cell['is_today'] ? 'is-today' : '' ?>" title="<?= htmlspecialchars($cell['status'] ?? 'No status') ?>">
+                  <div
+                    class="eg-calendar-day <?= $cell['is_today'] ? 'is-today' : '' ?>"
+                    data-date="<?= htmlspecialchars($cell['date']) ?>"
+                    title="<?= htmlspecialchars(($cell['status'] ?? 'No status') . ' — click for details') ?>"
+                  >
                     <div class="eg-calendar-day-number"><?= (int) $cell['day'] ?></div>
                     <?php if (!empty($cell['status_class'])): ?>
                       <span class="eg-calendar-dot <?= htmlspecialchars($cell['status_class']) ?>"></span>
@@ -364,11 +414,65 @@ for ($day = 1; $day <= $daysInMonth; $day++) {
         </div>
       </div>
     </div>
+
+    <div class="modal" id="attendanceDayModal" tabindex="-1" aria-labelledby="attendanceDayModalLabel" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="attendanceDayModalLabel">Attendance Details</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-2 small text-muted" id="attDayDate">-</div>
+            <div class="d-flex justify-content-between mb-2"><span>Status</span><strong id="attDayStatus">-</strong></div>
+            <div class="d-flex justify-content-between mb-2"><span>Time In</span><strong id="attDayIn">-</strong></div>
+            <div class="d-flex justify-content-between mb-2"><span>Time Out</span><strong id="attDayOut">-</strong></div>
+            <div class="d-flex justify-content-between mb-2"><span>Worked Hours</span><strong id="attDayHours">0.00</strong></div>
+            <div class="d-flex justify-content-between mb-2"><span>Late Minutes</span><strong id="attDayLate">0</strong></div>
+            <div class="d-flex justify-content-between"><span>Deduction</span><strong id="attDayDed">0.00</strong></div>
+          </div>
+        </div>
+      </div>
+    </div>
     <script
       src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
       integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
       crossorigin="anonymous"
     ></script>
+    <script>
+      (function () {
+        const details = <?= $attendanceDetailsJson ?: '{}' ?>;
+        const modalEl = document.getElementById('attendanceDayModal');
+        if (!modalEl) return;
+        const modal = new bootstrap.Modal(modalEl);
+        const elDate = document.getElementById('attDayDate');
+        const elStatus = document.getElementById('attDayStatus');
+        const elIn = document.getElementById('attDayIn');
+        const elOut = document.getElementById('attDayOut');
+        const elHours = document.getElementById('attDayHours');
+        const elLate = document.getElementById('attDayLate');
+        const elDed = document.getElementById('attDayDed');
+
+        const grid = document.getElementById('attendanceCalendarGrid');
+        if (!grid) return;
+
+        grid.addEventListener('click', function (evt) {
+          const dayEl = evt.target.closest('.eg-calendar-day[data-date]');
+          if (!dayEl || !grid.contains(dayEl)) return;
+          const dateKey = dayEl.getAttribute('data-date') || '';
+            const row = details[dateKey] || null;
+            if (!row) return;
+            elDate.textContent = row.date_label || row.date || dateKey;
+            elStatus.textContent = row.status || '-';
+            elIn.textContent = row.time_in_label || '-';
+            elOut.textContent = row.time_out_label || '-';
+            elHours.textContent = row.hours_label || '0.00';
+            elLate.textContent = String(Number(row.late_minutes || 0));
+            elDed.textContent = row.deduction_label || '0.00';
+            modal.show();
+        });
+      })();
+    </script>
   </body>
 </html>
 
