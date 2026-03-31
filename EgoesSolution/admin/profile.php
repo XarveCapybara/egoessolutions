@@ -342,17 +342,61 @@ function eg_admin_disp(?string $s): string
       <script>
         (function () {
           const code = <?= json_encode($employeeCode) ?>;
+          const employeeName = <?= json_encode($fullDisplayName !== '—' ? $fullDisplayName : $showName) ?>;
           const barcodeSvg = document.getElementById('adminBarcode');
           const downloadBtn = document.getElementById('downloadAdminBarcodeBtn');
           if (!barcodeSvg || !downloadBtn) return;
 
-          JsBarcode(barcodeSvg, code, {
-            format: 'CODE128',
-            width: 2,
-            height: 80,
-            displayValue: true,
-            margin: 8
-          });
+          const SVG_NS = 'http://www.w3.org/2000/svg';
+          function renderBarcodeWithName(codeValue, nameValue) {
+            const tempSvg = document.createElementNS(SVG_NS, 'svg');
+            JsBarcode(tempSvg, codeValue, {
+              format: 'CODE128',
+              width: 2,
+              height: 80,
+              displayValue: true,
+              margin: 8
+            });
+
+            const rawW = parseFloat(tempSvg.getAttribute('width') || '420');
+            const rawH = parseFloat(tempSvg.getAttribute('height') || '140');
+            const nameBand = 26;
+            const totalH = rawH + nameBand;
+
+            barcodeSvg.innerHTML = '';
+            barcodeSvg.setAttribute('width', String(rawW));
+            barcodeSvg.setAttribute('height', String(totalH));
+            barcodeSvg.setAttribute('viewBox', `0 0 ${rawW} ${totalH}`);
+
+            const bg = document.createElementNS(SVG_NS, 'rect');
+            bg.setAttribute('x', '0');
+            bg.setAttribute('y', '0');
+            bg.setAttribute('width', String(rawW));
+            bg.setAttribute('height', String(totalH));
+            bg.setAttribute('fill', '#ffffff');
+            barcodeSvg.appendChild(bg);
+
+            if (nameValue) {
+              const nameText = document.createElementNS(SVG_NS, 'text');
+              nameText.setAttribute('x', String(rawW / 2));
+              nameText.setAttribute('y', '16');
+              nameText.setAttribute('text-anchor', 'middle');
+              nameText.setAttribute('font-size', '14');
+              nameText.setAttribute('font-family', 'Arial, sans-serif');
+              nameText.setAttribute('fill', '#111111');
+              nameText.textContent = nameValue;
+              barcodeSvg.appendChild(nameText);
+            }
+
+            const g = document.createElementNS(SVG_NS, 'g');
+            g.setAttribute('transform', `translate(0, ${nameBand})`);
+            Array.from(tempSvg.childNodes).forEach(function (node) {
+              g.appendChild(node.cloneNode(true));
+            });
+            barcodeSvg.appendChild(g);
+          }
+
+          renderBarcodeWithName(code, employeeName);
 
           downloadBtn.addEventListener('click', function () {
             const serializer = new XMLSerializer();

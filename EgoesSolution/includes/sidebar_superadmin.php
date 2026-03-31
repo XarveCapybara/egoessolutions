@@ -22,6 +22,10 @@ $currentPage = basename($_SERVER['PHP_SELF'] ?? '');
       <i class="bi bi-currency-dollar"></i>
       <span>Payroll</span>
     </a>
+    <a href="loans.php" class="eg-sidebar-link <?= $currentPage === 'loans.php' ? 'active' : '' ?>">
+      <i class="bi bi-cash-coin"></i>
+      <span>Cash Advances</span>
+    </a>
     <a href="barcodes.php" class="eg-sidebar-link <?= $currentPage === 'barcodes.php' ? 'active' : '' ?>">
       <i class="bi bi-upc-scan"></i>
       <span>Employee Barcodes</span>

@@ -260,7 +260,7 @@ $fmtMoney = static function (float $n): string {
       rel="stylesheet"
       crossorigin="anonymous"
     />
-    <link rel="stylesheet" href="../assets/css/payslip-print.css?v=4" />
+    <link rel="stylesheet" href="../assets/css/payslip-print.css?v=20" />
   </head>
   <body class="eg-payslip-body">
     <div class="eg-payslip-toolbar d-flex flex-wrap align-items-center gap-2">
@@ -318,7 +318,7 @@ $fmtMoney = static function (float $n): string {
               </div>
             </div>
 
-            <div class="eg-payslip-box" style="margin-top: 10px">
+            <div class="eg-payslip-box eg-payslip-box--spaced">
               <div class="eg-payslip-box-title">Attendance Summary</div>
               <div class="eg-payslip-field" style="grid-template-columns: 1fr auto">
                 <label>Present Days</label>
@@ -326,7 +326,7 @@ $fmtMoney = static function (float $n): string {
               </div>
             </div>
 
-            <div class="eg-payslip-box" style="margin-top: 10px">
+            <div class="eg-payslip-box eg-payslip-box--spaced">
               <div class="eg-payslip-box-title">Earnings</div>
               <table class="eg-payslip-earnings">
                 <thead>
@@ -401,7 +401,7 @@ $fmtMoney = static function (float $n): string {
                   </tr>
                   <tr class="eg-payslip-bold">
                     <td>Total Deductions</td>
-                    <td class="eg-payslip-num"><span id="egPayslipDedTableTotal"><?= $fmtMoney($totalDeductionsAll) ?></span></td>
+                    <td class="eg-payslip-num"><span id="egPayslipDedTableTotal" class="eg-payslip-ded-table-total"><?= $fmtMoney($totalDeductionsAll) ?></span></td>
                   </tr>
                 </tbody>
               </table>
@@ -415,10 +415,10 @@ $fmtMoney = static function (float $n): string {
                 </div>
                 <div class="eg-payslip-net-deductions-summary">
                   <div class="eg-payslip-bold">Total Deductions</div>
-                  <div class="eg-payslip-num"><span id="egPayslipTotalDedAmount"><?= $fmtMoney($totalDeductionsAll) ?></span></div>
+                  <div class="eg-payslip-num"><span id="egPayslipTotalDedAmount" class="eg-payslip-total-ded-amount"><?= $fmtMoney($totalDeductionsAll) ?></span></div>
                 </div>
               </div>
-              <div class="eg-payslip-net-total">Net Pay: PHP <span id="egPayslipNetAmount"><?= $fmtMoney($net) ?></span></div>
+              <div class="eg-payslip-net-total">Net Pay: PHP <span id="egPayslipNetAmount" class="eg-payslip-net-amount"><?= $fmtMoney($net) ?></span></div>
             </div>
           </div>
         </div>
@@ -441,7 +441,7 @@ $fmtMoney = static function (float $n): string {
           <div class="eg-payslip-ack">
             <h4>EMPLOYEE ACKNOWLEDGEMENT</h4>
             <p>
-              I acknowledge that I have received the amount of <strong>PHP <span id="egPayslipAckAmount"><?= $fmtMoney($net) ?></span></strong> stated in this payslip.
+              I acknowledge that I have received the amount of <strong>PHP <span id="egPayslipAckAmount" class="eg-payslip-ack-amount"><?= $fmtMoney($net) ?></span></strong> stated in this payslip.
             </p>
             <div class="eg-payslip-sign-line"></div>
             <div style="text-align: center">Employee Signature / Date</div>
@@ -464,12 +464,18 @@ $fmtMoney = static function (float $n): string {
         ) ?>;
         (function () {
           var cb = document.getElementById('psShowDeductions');
-          var netEl = document.getElementById('egPayslipNetAmount');
-          var ackEl = document.getElementById('egPayslipAckAmount');
-          var dedEl = document.getElementById('egPayslipTotalDedAmount');
-          var dedTableTotalEl = document.getElementById('egPayslipDedTableTotal');
+          var sourceSheet = document.getElementById('egPayslipSheet');
+          if (sourceSheet && !document.getElementById('egPayslipSheetCopy')) {
+            var clone = sourceSheet.cloneNode(true);
+            clone.id = 'egPayslipSheetCopy';
+            clone.classList.add('eg-payslip-sheet-copy');
+            clone.querySelectorAll('[id]').forEach(function (el) {
+              el.removeAttribute('id');
+            });
+            sourceSheet.insertAdjacentElement('afterend', clone);
+          }
           var A = window.__EG_PAYSLIP_AMOUNTS;
-          if (!cb || !A || !netEl || !ackEl) return;
+          if (!cb || !A) return;
           function sync() {
             var show = cb.checked;
             var z = A.zero;
@@ -480,15 +486,15 @@ $fmtMoney = static function (float $n): string {
               el.textContent = show ? (el.getAttribute('data-full') || z) : z;
             });
             if (show) {
-              netEl.textContent = A.netFull;
-              ackEl.textContent = A.netFull;
-              if (dedEl) dedEl.textContent = A.totalDedFull;
-              if (dedTableTotalEl) dedTableTotalEl.textContent = A.totalDedFull;
+              document.querySelectorAll('.eg-payslip-net-amount').forEach(function (el) { el.textContent = A.netFull; });
+              document.querySelectorAll('.eg-payslip-ack-amount').forEach(function (el) { el.textContent = A.netFull; });
+              document.querySelectorAll('.eg-payslip-total-ded-amount').forEach(function (el) { el.textContent = A.totalDedFull; });
+              document.querySelectorAll('.eg-payslip-ded-table-total').forEach(function (el) { el.textContent = A.totalDedFull; });
             } else {
-              netEl.textContent = A.netLateOnly;
-              ackEl.textContent = A.netLateOnly;
-              if (dedEl) dedEl.textContent = A.totalDedLateOnly;
-              if (dedTableTotalEl) dedTableTotalEl.textContent = A.totalDedLateOnly;
+              document.querySelectorAll('.eg-payslip-net-amount').forEach(function (el) { el.textContent = A.netLateOnly; });
+              document.querySelectorAll('.eg-payslip-ack-amount').forEach(function (el) { el.textContent = A.netLateOnly; });
+              document.querySelectorAll('.eg-payslip-total-ded-amount').forEach(function (el) { el.textContent = A.totalDedLateOnly; });
+              document.querySelectorAll('.eg-payslip-ded-table-total').forEach(function (el) { el.textContent = A.totalDedLateOnly; });
             }
           }
           cb.addEventListener('change', sync);

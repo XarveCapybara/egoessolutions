@@ -47,6 +47,7 @@ if ($officeId) {
 
     $hasAttendanceLogs = $pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount() > 0;
     if ($hasAttendanceLogs) {
+        $hasLateMinutesColumn = $pdo->query("SHOW COLUMNS FROM attendance_logs LIKE 'late_minutes'")->rowCount() > 0;
         $presentStmt = $pdo->prepare('
             SELECT COUNT(DISTINCT employee_id)
             FROM attendance_logs
@@ -64,13 +65,25 @@ if ($officeId) {
         $scansToday = (int) $scansStmt->fetchColumn();
 
         $lateThreshold = !empty($officeTimeInOnly ?? null) ? $officeTimeInOnly : '09:00:00';
-        $lateStmt = $pdo->prepare('
-            SELECT COUNT(*)
-            FROM attendance_logs
-            WHERE office_id = ? AND log_date = ? AND time_in IS NOT NULL AND TIME(time_in) > ?
-        ');
-        $lateStmt->execute([$officeId, $effectiveWorkdayDate, $lateThreshold]);
-        $lateArrivals = (int) $lateStmt->fetchColumn();
+        if ($hasLateMinutesColumn) {
+            // Prefer stored late_minutes so dashboard matches scan/deduction rules.
+            $lateStmt = $pdo->prepare('
+                SELECT COUNT(*)
+                FROM attendance_logs
+                WHERE office_id = ? AND log_date = ? AND COALESCE(late_minutes, 0) > 0
+            ');
+            $lateStmt->execute([$officeId, $effectiveWorkdayDate]);
+            $lateArrivals = (int) $lateStmt->fetchColumn();
+        } else {
+            // Backward-compatible fallback when late_minutes column does not exist.
+            $lateStmt = $pdo->prepare('
+                SELECT COUNT(*)
+                FROM attendance_logs
+                WHERE office_id = ? AND log_date = ? AND time_in IS NOT NULL AND TIME(time_in) > ?
+            ');
+            $lateStmt->execute([$officeId, $effectiveWorkdayDate, $lateThreshold]);
+            $lateArrivals = (int) $lateStmt->fetchColumn();
+        }
 
         $recentStmt = $pdo->prepare('
             SELECT u.full_name, al.log_date, al.time_in, al.time_out, al.status
@@ -88,7 +101,8 @@ if ($officeId) {
             SELECT
                 u.full_name,
                 al.time_in,
-                al.time_out
+                al.time_out,
+                ' . ($hasLateMinutesColumn ? 'al.late_minutes' : 'NULL AS late_minutes') . '
             FROM users u
             INNER JOIN employees e ON e.user_id = u.id
             LEFT JOIN attendance_logs al
@@ -104,13 +118,19 @@ if ($officeId) {
             $statusLabel = 'Absent';
             $statusClass = 'secondary';
             if (!empty($row['time_in'])) {
-                $timeInOnly = date('H:i:s', strtotime($row['time_in']));
-                if ($timeInOnly > $lateThreshold) {
+                $lateMinutes = (int) ($row['late_minutes'] ?? 0);
+                if ($hasLateMinutesColumn && $lateMinutes > 0) {
                     $statusLabel = 'Late';
                     $statusClass = 'danger';
                 } else {
-                    $statusLabel = 'Present';
-                    $statusClass = 'success';
+                    $timeInOnly = date('H:i:s', strtotime($row['time_in']));
+                    if (!$hasLateMinutesColumn && $timeInOnly > $lateThreshold) {
+                        $statusLabel = 'Late';
+                        $statusClass = 'danger';
+                    } else {
+                        $statusLabel = 'Present';
+                        $statusClass = 'success';
+                    }
                 }
             }
             $employeeStatusList[] = [

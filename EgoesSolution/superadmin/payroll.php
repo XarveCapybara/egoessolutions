@@ -59,6 +59,28 @@ $hasAttendanceLogs = $pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount
 $hasEmployeesTable = $pdo->query("SHOW TABLES LIKE 'employees'")->rowCount() > 0;
 $hasAppSettingsTable = $pdo->query("SHOW TABLES LIKE 'app_settings'")->rowCount() > 0;
 $hasRateAmountColumn = $hasEmployeesTable && $pdo->query("SHOW COLUMNS FROM employees LIKE 'rate_amount'")->rowCount() > 0;
+$hasCashAdvancesTable = false;
+try {
+    $pdo->exec('
+        CREATE TABLE IF NOT EXISTS cash_advances (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            employee_id INT NOT NULL,
+            amount DECIMAL(12,2) NOT NULL,
+            notes VARCHAR(255) NULL,
+            advance_date DATE NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT "pending",
+            deducted_period_type VARCHAR(10) NULL,
+            deducted_period_start DATE NULL,
+            deducted_period_end DATE NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_cash_adv_employee (employee_id),
+            INDEX idx_cash_adv_status_date (status, advance_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ');
+    $hasCashAdvancesTable = true;
+} catch (Throwable $e) {
+    $hasCashAdvancesTable = $pdo->query("SHOW TABLES LIKE 'cash_advances'")->rowCount() > 0;
+}
 
 $defaultHourly = 0.0;
 $deductionPerMinute = 0.0;
@@ -128,6 +150,7 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
                 'rate_amount' => $row['rate_amount'] ?? null,
                 'worked_minutes' => 0,
                 'deductions' => 0.0,
+                'loan_deduction' => 0.0,
             ];
         }
         $workedMinutes = 0;
@@ -158,6 +181,48 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
             'late_minutes' => $lateMinutes,
             'deduction_amount' => $rowDeduction,
         ];
+    }
+
+    // Auto-deduct pending cash advances on next eligible payroll period.
+    if ($hasCashAdvancesTable && !empty($byEmployee)) {
+        $employeeIds = array_values(array_unique(array_map('intval', array_keys($byEmployee))));
+        $ph = implode(',', array_fill(0, count($employeeIds), '?'));
+        $loanStmt = $pdo->prepare("
+            SELECT id, employee_id, amount
+            FROM cash_advances
+            WHERE status = 'pending'
+              AND advance_date < ?
+              AND employee_id IN ({$ph})
+            ORDER BY advance_date, id
+        ");
+        $loanStmt->execute(array_merge([$rangeStart], $employeeIds));
+        $loanRows = $loanStmt->fetchAll(PDO::FETCH_ASSOC);
+        $appliedLoanIds = [];
+        foreach ($loanRows as $lr) {
+            $eid = (int) ($lr['employee_id'] ?? 0);
+            if (!isset($byEmployee[$eid])) {
+                continue;
+            }
+            $amt = (float) ($lr['amount'] ?? 0);
+            if ($amt <= 0) {
+                continue;
+            }
+            $byEmployee[$eid]['deductions'] += $amt;
+            $byEmployee[$eid]['loan_deduction'] += $amt;
+            $appliedLoanIds[] = (int) ($lr['id'] ?? 0);
+        }
+        if (!empty($appliedLoanIds)) {
+            $loanPh = implode(',', array_fill(0, count($appliedLoanIds), '?'));
+            $markStmt = $pdo->prepare("
+                UPDATE cash_advances
+                SET status = 'deducted',
+                    deducted_period_type = ?,
+                    deducted_period_start = ?,
+                    deducted_period_end = ?
+                WHERE id IN ({$loanPh})
+            ");
+            $markStmt->execute(array_merge([$period, $rangeStart, $rangeEnd], $appliedLoanIds));
+        }
     }
 
     foreach ($byEmployee as $eid => $agg) {
@@ -316,7 +381,8 @@ $payrollDetailRowsHtmlJson = json_encode(
           <h3 class="mb-3 fw-bold">Payroll</h3>
           <p class="text-muted mb-4">
             Totals from attendance (time in/out) for the selected <strong>week</strong> (Mon–Sun) or <strong>calendar month</strong>. Rates: per-employee override if &gt; 0, otherwise global default from
-            <a href="settings.php">Settings</a>. Deductions: stored amount or late minutes × deduction per minute (same rules as employee payslip).
+            <a href="settings.php">Settings</a>. Deductions: stored amount or late minutes × deduction per minute (same rules as employee payslip). Pending <a href="loans.php">cash advances</a> are
+            automatically deducted on the next eligible payroll period.
             <strong>Receipt status</strong> (pending / received) is saved per employee for this period.
           </p>
 
@@ -348,6 +414,21 @@ $payrollDetailRowsHtmlJson = json_encode(
               </div>
               <div class="col-12 col-md-3 col-lg-2 d-grid">
                 <button type="submit" class="btn btn-primary">Apply</button>
+              </div>
+              <div class="col-12 col-md-6 col-lg-3 d-grid">
+                <a
+                  class="btn btn-outline-success"
+                  href="payroll_department_summary.php?<?= htmlspecialchars(http_build_query([
+                      'period' => $period,
+                      'week' => $weekStartStr,
+                      'month' => $monthValueForInput,
+                      'office_id' => $officeFilter,
+                  ]), ENT_QUOTES, 'UTF-8') ?>"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  Generate Department Summary
+                </a>
               </div>
             </div>
             <p class="text-muted small mb-0 mt-2">
@@ -457,6 +538,22 @@ $payrollDetailRowsHtmlJson = json_encode(
                         <td class="text-end"><?= number_format($pr['gross'], 2) ?></td>
                         <td class="text-end"><?= number_format($pr['deductions'], 2) ?></td>
                         <td class="text-end fw-semibold"><?= number_format($pr['net'], 2) ?></td>
+                        <td class="text-center">
+                          <a
+                            href="payslip_print.php?<?= htmlspecialchars(http_build_query([
+                                'employee_id' => (int) $pr['employee_id'],
+                                'period' => $period,
+                                'week' => $weekStartStr,
+                                'month' => $monthValueForInput,
+                                'office_id' => $officeFilter,
+                            ]), ENT_QUOTES, 'UTF-8') ?>"
+                            class="btn btn-sm btn-outline-secondary"
+                            target="_blank"
+                            rel="noopener"
+                            title="Print payslip"
+                            aria-label="Print payslip for <?= htmlspecialchars($pr['full_name'], ENT_QUOTES, 'UTF-8') ?>"
+                          ><i class="bi bi-printer"></i></a>
+                        </td>
                         <td>
                           <form method="post" action="save_payroll_receipt.php" class="d-flex flex-wrap align-items-center gap-1">
                             <input type="hidden" name="period_type" value="<?= htmlspecialchars($period) ?>" />
