@@ -7,9 +7,86 @@ if (($_SESSION['role'] ?? '') !== 'superadmin') {
 $name = $_SESSION['display_name'] ?? 'Super Admin';
 
 require_once __DIR__ . '/../config/database.php';
+
+$offices = [];
+try {
+    $offices = $pdo->query('SELECT id, name FROM offices ORDER BY name')->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
+    $offices = [];
+}
+
+$rawOfficeId = $_GET['office_id'] ?? null;
+if ($rawOfficeId === null || $rawOfficeId === '') {
+    $officeChoiceMade = false;
+    $officeFilter = 0;
+} else {
+    $officeChoiceMade = true;
+    $officeFilter = (int) $rawOfficeId;
+}
+$employeeFilter = trim((string) ($_GET['employee'] ?? ''));
+$dateFrom = trim((string) ($_GET['date_from'] ?? ''));
+$dateTo = trim((string) ($_GET['date_to'] ?? ''));
+$limitInput = (int) ($_GET['limit'] ?? 50);
+$allowedLimits = [25, 50, 100, 200];
+if (!in_array($limitInput, $allowedLimits, true)) {
+    $limitInput = 50;
+}
+
+$today = date('Y-m-d');
+if ($dateFrom === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateFrom)) {
+    $dateFrom = $today;
+}
+if ($dateTo === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTo)) {
+    $dateTo = $today;
+}
+if ($dateFrom > $dateTo) {
+    $tmp = $dateFrom;
+    $dateFrom = $dateTo;
+    $dateTo = $tmp;
+}
+
+$attendanceQuickQuery = function (array $base, string $from, string $to): string {
+    $base['date_from'] = $from;
+    $base['date_to'] = $to;
+
+    return '?' . http_build_query($base);
+};
+
+$quickBase = [
+    'employee' => $employeeFilter,
+    'limit' => $limitInput,
+];
+if ($officeChoiceMade) {
+    $quickBase['office_id'] = $officeFilter;
+}
+$yesterday = date('Y-m-d', strtotime('-1 day'));
+$last7From = date('Y-m-d', strtotime('-6 days'));
+
 $logs = [];
-if ($pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount()) {
-    $stmt = $pdo->query('SELECT al.*, u.full_name, o.name AS office_name FROM attendance_logs al JOIN employees e ON al.employee_id = e.id JOIN users u ON e.user_id = u.id JOIN offices o ON al.office_id = o.id ORDER BY al.log_date DESC, al.time_in DESC LIMIT 100');
+if ($officeChoiceMade && $pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount()) {
+    $sql = '
+        SELECT
+            al.*,
+            u.full_name,
+            o.name AS office_name
+        FROM attendance_logs al
+        JOIN employees e ON al.employee_id = e.id
+        JOIN users u ON e.user_id = u.id
+        JOIN offices o ON al.office_id = o.id
+        WHERE al.log_date BETWEEN ? AND ?
+    ';
+    $params = [$dateFrom, $dateTo];
+    if ($officeFilter > 0) {
+        $sql .= ' AND al.office_id = ?';
+        $params[] = $officeFilter;
+    }
+    if ($employeeFilter !== '') {
+        $sql .= ' AND u.full_name LIKE ?';
+        $params[] = '%' . $employeeFilter . '%';
+    }
+    $sql .= ' ORDER BY al.log_date DESC, al.time_in DESC LIMIT ' . $limitInput;
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
     $logs = $stmt->fetchAll();
 }
 ?>
@@ -18,7 +95,7 @@ if ($pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount()) {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Super Admin Attendance</title>
+    <title>EGoes Solutions</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -40,6 +117,55 @@ if ($pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount()) {
 
         <main class="col-12 col-md-9 col-lg-10 py-4">
           <h3 class="fw-bold mb-3">All Offices Attendance Records</h3>
+          <p class="text-muted small mb-2">Choose <strong>All offices</strong> or a specific office, then Apply. Dates default to <strong>today</strong>.</p>
+          <form method="get" class="eg-panel p-3 mb-3">
+            <div class="row g-3 align-items-end">
+              <div class="col-12 col-sm-6 col-md-3">
+                <label class="form-label" for="office_id">Office</label>
+                <select class="form-select" id="office_id" name="office_id">
+                  <option value="" <?= !$officeChoiceMade ? ' selected' : '' ?>>Select office</option>
+                  <option value="0" <?= $officeChoiceMade && $officeFilter === 0 ? ' selected' : '' ?>>All offices</option>
+                  <?php foreach ($offices as $o): ?>
+                    <option value="<?= (int) $o['id'] ?>" <?= $officeFilter === (int) $o['id'] ? ' selected' : '' ?>>
+                      <?= htmlspecialchars((string) $o['name']) ?>
+                    </option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+              <div class="col-12 col-sm-6 col-md-3">
+                <label class="form-label" for="date_from">Date from</label>
+                <input type="date" class="form-control" id="date_from" name="date_from" value="<?= htmlspecialchars($dateFrom, ENT_QUOTES, 'UTF-8') ?>" />
+              </div>
+              <div class="col-12 col-sm-6 col-md-3">
+                <label class="form-label" for="date_to">Date to</label>
+                <input type="date" class="form-control" id="date_to" name="date_to" value="<?= htmlspecialchars($dateTo, ENT_QUOTES, 'UTF-8') ?>" />
+              </div>
+              <div class="col-12 col-sm-6 col-md-3">
+                <label class="form-label" for="employee">Employee</label>
+                <input type="text" class="form-control" id="employee" name="employee" placeholder="Search name" value="<?= htmlspecialchars($employeeFilter, ENT_QUOTES, 'UTF-8') ?>" />
+              </div>
+              <div class="col-12 col-sm-6 col-md-3">
+                <label class="form-label" for="limit">Rows</label>
+                <select class="form-select" id="limit" name="limit">
+                  <?php foreach ($allowedLimits as $lim): ?>
+                    <option value="<?= $lim ?>" <?= $limitInput === $lim ? ' selected' : '' ?>><?= $lim ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+              <div class="col-12 col-sm-6 col-md-3 d-grid">
+                <button type="submit" class="btn btn-primary">Apply filters</button>
+              </div>
+              <div class="col-12 col-sm-6 col-md-3 d-grid">
+                <a class="btn btn-outline-secondary" href="attendance.php" title="Clear to today’s date range">Reset to today</a>
+              </div>
+              <div class="col-12">
+                <span class="text-muted small me-2">Quick:</span>
+                <a class="btn btn-sm btn-outline-primary me-1 mb-1" href="<?= htmlspecialchars($attendanceQuickQuery($quickBase, $today, $today), ENT_QUOTES, 'UTF-8') ?>">Today</a>
+                <a class="btn btn-sm btn-outline-primary me-1 mb-1" href="<?= htmlspecialchars($attendanceQuickQuery($quickBase, $yesterday, $yesterday), ENT_QUOTES, 'UTF-8') ?>">Yesterday</a>
+                <a class="btn btn-sm btn-outline-primary mb-1" href="<?= htmlspecialchars($attendanceQuickQuery($quickBase, $last7From, $today), ENT_QUOTES, 'UTF-8') ?>">Last 7 days</a>
+              </div>
+            </div>
+          </form>
           <div class="table-responsive bg-white rounded-3 shadow-sm p-3">
             <table class="table table-bordered table-sm align-middle mb-0">
               <thead class="table-light">
@@ -53,8 +179,10 @@ if ($pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount()) {
                 </tr>
               </thead>
               <tbody>
-                <?php if (empty($logs)): ?>
-                  <tr><td colspan="6" class="text-muted text-center py-4">No attendance records yet. Data from scans will appear here.</td></tr>
+                <?php if (!$officeChoiceMade): ?>
+                  <tr><td colspan="6" class="text-muted text-center py-4">Select <strong>All offices</strong> or an office, then click <strong>Apply filters</strong> to load records.</td></tr>
+                <?php elseif (empty($logs)): ?>
+                  <tr><td colspan="6" class="text-muted text-center py-4">No attendance records found for the selected filters.</td></tr>
                 <?php else: ?>
                   <?php foreach ($logs as $log): ?>
                     <tr>

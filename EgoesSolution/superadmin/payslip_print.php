@@ -14,19 +14,37 @@ function eg_payroll_monday(DateTimeImmutable $d): DateTimeImmutable
     return $d->modify('-' . ($w - 1) . ' days')->setTime(0, 0, 0);
 }
 
-function eg_payslip_period_display(string $period, DateTimeImmutable $weekMonday, DateTimeImmutable $weekSunday, DateTimeImmutable $monthPicked): string
+function eg_cash_advance_week_range(string $advanceDate): ?array
+{
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $advanceDate)) {
+        return null;
+    }
+    $d = DateTimeImmutable::createFromFormat('Y-m-d', $advanceDate);
+    if (!$d) {
+        return null;
+    }
+    $weekStart = eg_payroll_monday($d->setTime(0, 0, 0));
+    // Cash advances follow payroll workweek cutoff (Mon-Fri).
+    $weekEnd = $weekStart->modify('+4 days');
+    return [
+        'start' => $weekStart->format('Y-m-d'),
+        'end' => $weekEnd->format('Y-m-d'),
+    ];
+}
+
+function eg_payslip_period_display(string $period, DateTimeImmutable $weekMonday, DateTimeImmutable $weekFriday, DateTimeImmutable $monthPicked): string
 {
     if ($period === 'month') {
         return $monthPicked->format('F Y') . ' (full month)';
     }
     $m1 = $weekMonday->format('n');
-    $m2 = $weekSunday->format('n');
+    $m2 = $weekFriday->format('n');
     $y1 = $weekMonday->format('Y');
-    $y2 = $weekSunday->format('Y');
+    $y2 = $weekFriday->format('Y');
     if ($m1 === $m2 && $y1 === $y2) {
-        return $weekMonday->format('F j') . '-' . $weekSunday->format('j, Y');
+        return $weekMonday->format('F j') . '-' . $weekFriday->format('j, Y');
     }
-    return $weekMonday->format('M j') . ' – ' . $weekSunday->format('M j, Y');
+    return $weekMonday->format('M j') . ' – ' . $weekFriday->format('M j, Y');
 }
 
 $employeeId = (int) ($_GET['employee_id'] ?? 0);
@@ -48,9 +66,9 @@ if ($weekInput !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $weekInput)) {
     $picked = new DateTimeImmutable('today');
 }
 $weekMonday = eg_payroll_monday($picked);
-$weekSunday = $weekMonday->modify('+6 days');
+$weekFriday = $weekMonday->modify('+4 days');
 $weekStartStr = $weekMonday->format('Y-m-d');
-$weekEndStr = $weekSunday->format('Y-m-d');
+$weekEndStr = $weekFriday->format('Y-m-d');
 
 $monthInput = trim((string) ($_GET['month'] ?? ''));
 if ($monthInput !== '' && preg_match('/^\d{4}-\d{2}$/', $monthInput)) {
@@ -71,7 +89,7 @@ if ($period === 'month') {
 }
 
 $officeFilter = (int) ($_GET['office_id'] ?? 0);
-$payPeriodLabel = eg_payslip_period_display($period, $weekMonday, $weekSunday, $monthPicked);
+$payPeriodLabel = eg_payslip_period_display($period, $weekMonday, $weekFriday, $monthPicked);
 $earningsPeriodCol = $period === 'month' ? 'Monthly' : 'Daily / Weekly';
 
 $hasAttendanceLogs = $pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount() > 0;
@@ -215,6 +233,7 @@ if (!$hasAttendanceLogs || !$hasEmployeesTable) {
 
 $otherDeductions = 0.0;
 $tardinessAmount = $deductionsTotal;
+$cashAdvanceDeduction = 0.0;
 $regularHoliday = 0.0;
 $specialHoliday = 0.0;
 $allowance = 0.0;
@@ -233,20 +252,109 @@ if ($error === null) {
     } catch (Throwable $e) {
         $payrollDeductionLines = [];
     }
+
+    try {
+        $loanStmt = $pdo->prepare("
+            SELECT amount, advance_date, status
+            FROM cash_advances
+            WHERE employee_id = ?
+              AND status = 'deducted'
+            ORDER BY advance_date, id
+        ");
+        $loanStmt->execute([$employeeId]);
+        $loanRows = $loanStmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($loanRows as $lr) {
+            $isDueThisPeriod = false;
+            if ($period === 'week') {
+                $targetWeek = eg_cash_advance_week_range((string) ($lr['advance_date'] ?? ''));
+                $isDueThisPeriod = $targetWeek
+                    && $targetWeek['start'] === $rangeStart
+                    && $targetWeek['end'] === $rangeEnd;
+            } else {
+                $ad = (string) ($lr['advance_date'] ?? '');
+                $isDueThisPeriod = $ad !== '' && $ad >= $rangeStart && $ad <= $rangeEnd;
+            }
+            if (!$isDueThisPeriod) {
+                continue;
+            }
+            $amt = (float) ($lr['amount'] ?? 0);
+            if ($amt > 0) {
+                $cashAdvanceDeduction += $amt;
+            }
+        }
+    } catch (Throwable $e) {
+        $cashAdvanceDeduction = 0.0;
+    }
 }
 
 $totalStatutoryAndOther = $totalConfigurableDeductions + $otherDeductions;
-$totalDeductionsAll = $totalStatutoryAndOther + $tardinessAmount;
+$totalDeductionsAll = $totalStatutoryAndOther + $tardinessAmount + $cashAdvanceDeduction;
 $net = $gross - $totalDeductionsAll;
 
 /** Total deductions if settings lines + “Other” show as 0 but late/attendance still applies */
-$totalDeductionsLateAttendanceOnly = $tardinessAmount;
+$totalDeductionsLateAttendanceOnly = $tardinessAmount + $cashAdvanceDeduction;
 /** Net pay for that same payslip view (gross minus late/attendance only; configurable & other treated as 0) */
-$netWithConfigurableLinesAsZero = $gross - $tardinessAmount;
+$netWithConfigurableLinesAsZero = $gross - $totalDeductionsLateAttendanceOnly;
 
 $fmtMoney = static function (float $n): string {
     return number_format($n, 2, '.', ',');
 };
+
+if (($_GET['export'] ?? '') === 'excel') {
+    $safeCode = preg_replace('/[^A-Za-z0-9_-]/', '_', (string) $employeeCode);
+    $fname = 'payslip_' . $safeCode . '_' . preg_replace('/[^0-9-]/', '', (string) $rangeStart) . '.csv';
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="' . $fname . '"');
+    echo "\xEF\xBB\xBF";
+    $out = fopen('php://output', 'w');
+    if ($out === false) {
+        http_response_code(500);
+        echo 'Could not start export.';
+        exit;
+    }
+    if ($error !== null) {
+        fputcsv($out, ['Error']);
+        fputcsv($out, [$error]);
+        fclose($out);
+        exit;
+    }
+    fputcsv($out, ['E-Goes Solutions', 'Payslip']);
+    fputcsv($out, ['Address', 'Luna Tiradpass, Bello Building, 2nd floor, Digos City']);
+    fputcsv($out, []);
+    fputcsv($out, ['Field', 'Value']);
+    fputcsv($out, ['Pay period', $payPeriodLabel]);
+    fputcsv($out, ['Employee name', $fullName]);
+    fputcsv($out, ['Position', $positionLabel]);
+    fputcsv($out, ['Employee code', $employeeCode]);
+    fputcsv($out, ['Office', $officeName]);
+    fputcsv($out, ['Present days', (string) $presentDays]);
+    fputcsv($out, ['Hourly rate (PHP)', $fmtMoney($hourlyRate)]);
+    fputcsv($out, ['Hours worked', number_format($hoursWorked, 2, '.', '')]);
+    fputcsv($out, []);
+    fputcsv($out, ['Earnings']);
+    fputcsv($out, ['Item', $earningsPeriodCol, 'Amount (PHP)']);
+    fputcsv($out, ['Basic salary', number_format($hoursWorked, 2, '.', '') . ' hrs', $fmtMoney($gross)]);
+    fputcsv($out, ['Allowance', '—', $fmtMoney($allowance)]);
+    fputcsv($out, ['Overtime pay', '—', $fmtMoney($overtimePay)]);
+    fputcsv($out, ['Regular holiday', '—', $fmtMoney($regularHoliday)]);
+    fputcsv($out, ['Special holiday', '—', $fmtMoney($specialHoliday)]);
+    fputcsv($out, ['Gross pay', '', $fmtMoney($gross)]);
+    fputcsv($out, []);
+    fputcsv($out, ['Deductions']);
+    fputcsv($out, ['Item', 'Amount (PHP)']);
+    foreach ($payrollDeductionLines as $line) {
+        $amt = (float) ($line['default_amount'] ?? 0);
+        fputcsv($out, [(string) ($line['label'] ?? ''), $fmtMoney($amt)]);
+    }
+    fputcsv($out, ['Late / attendance deductions', $fmtMoney($tardinessAmount)]);
+    fputcsv($out, ['Cash advance deduction', $fmtMoney($cashAdvanceDeduction)]);
+    fputcsv($out, ['Other deductions', $fmtMoney($otherDeductions)]);
+    fputcsv($out, ['Total deductions', $fmtMoney($totalDeductionsAll)]);
+    fputcsv($out, []);
+    fputcsv($out, ['Net pay (PHP)', $fmtMoney($net)]);
+    fclose($out);
+    exit;
+}
 
 ?>
 <!DOCTYPE html>
@@ -254,17 +362,35 @@ $fmtMoney = static function (float $n): string {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Payslip — <?= htmlspecialchars($fullName !== '' ? $fullName : 'Employee', ENT_QUOTES, 'UTF-8') ?></title>
+    <title>EGoes Solutions</title>
     <link
       href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
       rel="stylesheet"
       crossorigin="anonymous"
     />
-    <link rel="stylesheet" href="../assets/css/payslip-print.css?v=20" />
+    <link rel="stylesheet" href="../assets/css/payslip-print.css?v=29" />
+    <style>
+      :root {
+        --eg-payslip-fill: #f1e6ff;
+        --eg-payslip-fill-alt: #e6d4ff;
+      }
+      .eg-payslip-header {
+        background: #6f42c1 !important;
+        color: #fff !important;
+        border-bottom: 0 !important;
+        padding: 10px 12px !important;
+        align-items: center !important;
+      }
+      .eg-payslip-company-name,
+      .eg-payslip-address,
+      .eg-payslip-title {
+        color: #fff !important;
+      }
+    </style>
   </head>
   <body class="eg-payslip-body">
     <div class="eg-payslip-toolbar d-flex flex-wrap align-items-center gap-2">
-      <button type="button" class="btn btn-dark" onclick="window.print()">Print / Save as PDF</button>
+      <button type="button" class="btn btn-dark" onclick="window.print()">Print</button>
       <a href="payroll.php?<?= htmlspecialchars(http_build_query([
           'period' => $period,
           'week' => $weekStartStr,
@@ -285,6 +411,7 @@ $fmtMoney = static function (float $n): string {
         <p class="eg-payslip-error-msg"><?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?></p>
       </div>
     <?php else: ?>
+      <div class="eg-payslip-print-pair" id="egPayslipPrintPair">
       <div class="eg-payslip-sheet" id="egPayslipSheet">
         <header class="eg-payslip-header">
           <div class="eg-payslip-brand">
@@ -394,6 +521,10 @@ $fmtMoney = static function (float $n): string {
                     <td class="eg-payslip-num"><?= $fmtMoney($tardinessAmount) ?></td>
                   </tr>
                   <tr>
+                    <td>Cash Advance Deduction</td>
+                    <td class="eg-payslip-num"><?= $fmtMoney($cashAdvanceDeduction) ?></td>
+                  </tr>
+                  <tr>
                     <td>Other Deductions</td>
                     <td class="eg-payslip-num">
                       <span class="eg-payslip-ded-other" data-full="<?= htmlspecialchars($fmtMoney($otherDeductions), ENT_QUOTES, 'UTF-8') ?>"><?= $fmtMoney($otherDeductions) ?></span>
@@ -448,6 +579,7 @@ $fmtMoney = static function (float $n): string {
           </div>
         </footer>
       </div>
+      </div>
     <?php endif; ?>
 
     <?php if ($error === null): ?>
@@ -463,17 +595,41 @@ $fmtMoney = static function (float $n): string {
             JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE
         ) ?>;
         (function () {
-          var cb = document.getElementById('psShowDeductions');
-          var sourceSheet = document.getElementById('egPayslipSheet');
-          if (sourceSheet && !document.getElementById('egPayslipSheetCopy')) {
-            var clone = sourceSheet.cloneNode(true);
-            clone.id = 'egPayslipSheetCopy';
-            clone.classList.add('eg-payslip-sheet-copy');
-            clone.querySelectorAll('[id]').forEach(function (el) {
+          var pair = document.getElementById('egPayslipPrintPair');
+          var sheet = document.getElementById('egPayslipSheet');
+          function ensurePrintTwin() {
+            if (!pair || !sheet || pair.querySelector('.eg-payslip-sheet--print-twin')) return;
+            var c = sheet.cloneNode(true);
+            c.removeAttribute('id');
+            c.classList.add('eg-payslip-sheet--print-twin');
+            c.querySelectorAll('[id]').forEach(function (el) {
               el.removeAttribute('id');
             });
-            sourceSheet.insertAdjacentElement('afterend', clone);
+            c.querySelectorAll('label[for]').forEach(function (el) {
+              el.removeAttribute('for');
+            });
+            pair.appendChild(c);
+            pair.classList.add('eg-payslip-print-pair--two-up');
           }
+          function removePrintTwin() {
+            if (!pair) return;
+            pair.querySelectorAll('.eg-payslip-sheet--print-twin').forEach(function (el) {
+              el.remove();
+            });
+            pair.classList.remove('eg-payslip-print-pair--two-up');
+          }
+          window.addEventListener('beforeprint', ensurePrintTwin);
+          window.addEventListener('afterprint', removePrintTwin);
+          if (window.matchMedia) {
+            window.matchMedia('print').addEventListener('change', function (e) {
+              if (e.matches) ensurePrintTwin();
+              else removePrintTwin();
+            });
+          }
+          var cb = document.getElementById('psShowDeductions');
+          document.querySelectorAll('.eg-payslip-print-clone').forEach(function (el) {
+            el.remove();
+          });
           var A = window.__EG_PAYSLIP_AMOUNTS;
           if (!cb || !A) return;
           function sync() {

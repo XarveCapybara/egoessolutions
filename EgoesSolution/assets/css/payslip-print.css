@@ -1,8 +1,8 @@
 /* Printable payslip — E-Goes template style (screen + print) */
 :root {
   --eg-payslip-border: #000;
-  --eg-payslip-fill: #f5e6d8;
-  --eg-payslip-fill-alt: #faf4ef;
+  --eg-payslip-fill: #f1e6ff;
+  --eg-payslip-fill-alt: #e6d4ff;
 }
 
 body.eg-payslip-body {
@@ -32,13 +32,21 @@ body.eg-payslip-body {
   display: none;
 }
 
+/* Wrapper for payslip; second slip is injected in JS only for print (beforeprint) */
+.eg-payslip-print-pair {
+  max-width: 920px;
+  margin: 0 auto;
+}
+
 .eg-payslip-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
-  border-bottom: 1px solid var(--eg-payslip-border);
-  padding-bottom: 6px;
+  background: #6f42c1;
+  color: #fff;
+  border-bottom: 0;
+  padding: 10px 12px;
   margin-bottom: 6px;
 }
 
@@ -50,6 +58,7 @@ body.eg-payslip-body {
   font-weight: 700;
   font-size: 16px;
   letter-spacing: 0.02em;
+  color: #fff;
 }
 
 .eg-payslip-address {
@@ -57,12 +66,14 @@ body.eg-payslip-body {
   margin-top: 1px;
   max-width: 300px;
   line-height: 1.3;
+  color: #fff;
 }
 
 .eg-payslip-title {
   font-size: 30px;
   font-weight: 700;
   align-self: center;
+  color: #fff;
 }
 
 .eg-payslip-grid {
@@ -237,7 +248,7 @@ body.eg-payslip-body {
   font-size: 10px;
 }
 
-/* Print: keep same format, scaled so 2 copies fit */
+/* Print: A4 landscape with page margins */
 @media print {
   body.eg-payslip-body {
     background: #fff;
@@ -245,47 +256,61 @@ body.eg-payslip-body {
     padding: 0;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1mm;
-    align-items: start;
+    display: block;
+    box-sizing: border-box;
+    text-align: left;
   }
 
   .eg-payslip-toolbar {
     display: none !important;
   }
 
+  /* Keep natural card width — do not span full page (avoids stretched grid/tables) */
   .eg-payslip-sheet {
-    max-width: none;
-    width: 100%;
-    margin: 0;
+    max-width: 920px !important;
+    width: auto;
+    margin: 0 !important;
     page-break-inside: avoid;
     break-inside: avoid;
-    zoom: 0.56;
+    zoom: 0.82;
     transform-origin: top left;
-    font-size: 10.5px;
+    transform: none;
+    font-size: 9px;
+    box-sizing: border-box;
+    height: auto !important;
   }
 
-  .eg-payslip-sheet-copy {
-    display: block;
+  /* Two slips only when JS adds .eg-payslip-print-pair--two-up at print time */
+  .eg-payslip-print-pair--two-up {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 6px;
+    max-width: none !important;
     width: 100%;
-    margin: 0;
-    zoom: 0.56;
-    transform-origin: top left;
-    font-size: 10.5px;
+    margin: 0 !important;
+    zoom: 0.7;
+    box-sizing: border-box;
   }
 
-  .eg-payslip-sheet,
-  .eg-payslip-sheet-copy {
-    margin-bottom: 0;
+  .eg-payslip-print-pair--two-up .eg-payslip-sheet {
+    flex: 0 0 auto;
+    zoom: 1 !important;
+    max-width: 920px !important;
+  }
+
+  .eg-payslip-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
   }
 
   .eg-payslip-sheet-copy {
-    margin-bottom: 0;
+    display: none !important;
   }
 
   @page {
     size: A4 landscape;
-    margin: 4mm;
+    margin: 8mm;
   }
 }

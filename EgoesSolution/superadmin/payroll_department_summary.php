@@ -242,7 +242,7 @@ foreach ($employees as $e) {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Department Payroll Summary</title>
+    <title>EGoes Solutions</title>
     <link rel="stylesheet" href="../assets/css/payslip-print.css?v=20" />
     <style>
       .eg-toolbar-btn {
@@ -256,35 +256,88 @@ foreach ($employees as $e) {
       }
       .eg-toolbar-btn--primary { background: #1f2730; color: #fff; border-color: #1f2730; }
       .eg-toolbar-btn--secondary { background: #f3f4f6; color: #333; }
+      .eg-payslip-sheet {
+        background: #fff !important;
+      }
       .eg-dept-title { font-size: 22px; font-weight: 700; }
       .eg-summary-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0; border: 1px solid #000; }
       .eg-summary-grid > div { border-right: 1px solid #000; padding: 6px 5px; text-align: center; }
       .eg-summary-grid > div:last-child { border-right: 0; }
-      .eg-summary-head { background: #f0e7df; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; }
+      .eg-summary-head { background: #e6d4ff; color: #111; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; }
       .eg-summary-val { font-size: 14px; font-weight: 700; }
       .eg-detail th, .eg-detail td { font-size: 10px; }
-      .eg-detail th { background: #f0e7df; }
+      .eg-detail th,
+      .eg-detail thead th,
+      .eg-payslip-deductions-inner.eg-detail thead th {
+        background: #e6d4ff !important;
+        color: #111;
+      }
+      .eg-payslip-deductions-inner.eg-detail tbody tr:nth-child(odd) td {
+        background: #ffffff !important;
+      }
+      .eg-payslip-deductions-inner.eg-detail tbody tr:nth-child(even) td {
+        background: #f1e6ff !important;
+      }
+      .eg-payslip-header {
+        background: #6f42c1 !important;
+        color: #fff;
+        border-bottom: 0 !important;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px !important;
+        min-height: 56px;
+      }
+      .eg-payslip-header .eg-payslip-company-name,
+      .eg-payslip-header .eg-payslip-address,
+      .eg-payslip-header .eg-payslip-title {
+        color: #fff !important;
+      }
+      .eg-payslip-header .eg-payslip-company-name { font-size: 22px; font-weight: 700; line-height: 1.1; }
+      .eg-payslip-header .eg-payslip-address { font-size: 12px; line-height: 1.1; margin-top: 2px; }
+      .eg-payslip-header .eg-payslip-title { font-size: 46px; font-weight: 800; line-height: 1; }
+      .eg-payslip-header .eg-payslip-brand,
+      .eg-payslip-header .eg-payslip-title {
+        background: transparent !important;
+      }
+      .eg-detail th:last-child,
+      .eg-detail td:last-child {
+        width: 14%;
+        min-width: 130px;
+      }
+      .eg-detail td:last-child {
+        padding-top: 12px;
+        padding-bottom: 12px;
+      }
+      .eg-detail tbody tr:nth-child(odd),
+      .eg-detail tbody tr:nth-child(even) {
+        background: #fff;
+      }
       @media print {
         .eg-payslip-toolbar { display: none !important; }
         body.eg-payslip-body { display: block !important; padding: 0 !important; }
         .eg-payslip-sheet {
           width: 100% !important;
           max-width: none !important;
-          zoom: 1 !important;
+          zoom: 0.86 !important;
           transform: none !important;
           margin: 0 !important;
-          font-size: 12px !important;
+          font-size: 10px !important;
         }
-        .eg-summary-head { font-size: 11px; }
-        .eg-summary-val { font-size: 17px; }
-        .eg-detail th, .eg-detail td { font-size: 11px; }
-        @page { size: landscape; margin: 6mm; }
+        .eg-payslip-box { padding: 8px 10px !important; margin-bottom: 8px !important; }
+        .eg-dept-title { font-size: 17px !important; }
+        .eg-summary-head { font-size: 9px; }
+        .eg-summary-val { font-size: 13px; }
+        .eg-detail th, .eg-detail td { font-size: 9px; line-height: 1.2; padding: 4px 5px !important; }
+        .eg-detail th:last-child,
+        .eg-detail td:last-child { min-width: 100px; padding-top: 8px !important; padding-bottom: 8px !important; }
+        @page { size: A4 landscape; margin: 4mm; }
       }
     </style>
   </head>
   <body class="eg-payslip-body">
     <div class="eg-payslip-toolbar d-flex flex-wrap align-items-center gap-2">
-      <a href="#" class="eg-toolbar-btn eg-toolbar-btn--primary" onclick="window.print(); return false;">Print / Save as PDF</a>
+      <a href="#" class="eg-toolbar-btn eg-toolbar-btn--primary" onclick="window.print(); return false;">Print</a>
       <a class="eg-toolbar-btn eg-toolbar-btn--secondary" href="payroll.php?<?= htmlspecialchars(http_build_query([
           'period' => $period,
           'week' => $weekStartStr,
@@ -338,13 +391,13 @@ foreach ($employees as $e) {
               <th style="width:10%;">Employee ID</th>
               <th style="width:11%;">Position</th>
               <th style="width:9%;">Gross Pay</th>
-              <th style="width:8%;">SSSEE</th>
-              <th style="width:9%;">PhilHealthEE</th>
-              <th style="width:9%;">Pag-IBIGEE</th>
+              <th style="width:8%;">SSS</th>
+              <th style="width:9%;">PhilHealth</th>
+              <th style="width:9%;">Pag-IBIG</th>
               <th style="width:7%;">Loan</th>
               <th style="width:8%;">Others</th>
-              <th style="width:8%;">NetPay</th>
-              <th style="width:9%;">Signature</th>
+              <th style="width:7%;">NetPay</th>
+              <th style="width:14%;">Signature</th>
             </tr>
           </thead>
           <tbody>

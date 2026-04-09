@@ -16,6 +16,24 @@ function eg_payroll_monday(DateTimeImmutable $d): DateTimeImmutable
     return $d->modify('-' . ($w - 1) . ' days')->setTime(0, 0, 0);
 }
 
+function eg_cash_advance_week_range(string $advanceDate): ?array
+{
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $advanceDate)) {
+        return null;
+    }
+    $d = DateTimeImmutable::createFromFormat('Y-m-d', $advanceDate);
+    if (!$d) {
+        return null;
+    }
+    $weekStart = eg_payroll_monday($d->setTime(0, 0, 0));
+    // Cash advances follow payroll workweek cutoff (Mon-Fri).
+    $weekEnd = $weekStart->modify('+4 days');
+    return [
+        'start' => $weekStart->format('Y-m-d'),
+        'end' => $weekEnd->format('Y-m-d'),
+    ];
+}
+
 $period = trim((string) ($_GET['period'] ?? 'week'));
 if ($period !== 'month') {
     $period = 'week';
@@ -28,9 +46,9 @@ if ($weekInput !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $weekInput)) {
     $picked = new DateTimeImmutable('today');
 }
 $weekMonday = eg_payroll_monday($picked);
-$weekSunday = $weekMonday->modify('+6 days');
+$weekFriday = $weekMonday->modify('+4 days');
 $weekStartStr = $weekMonday->format('Y-m-d');
-$weekEndStr = $weekSunday->format('Y-m-d');
+$weekEndStr = $weekFriday->format('Y-m-d');
 
 $monthInput = trim((string) ($_GET['month'] ?? ''));
 if ($monthInput !== '' && preg_match('/^\d{4}-\d{2}$/', $monthInput)) {
@@ -50,7 +68,7 @@ if ($period === 'month') {
 } else {
     $rangeStart = $weekStartStr;
     $rangeEnd = $weekEndStr;
-    $periodSummaryLabel = $weekMonday->format('M j') . ' – ' . $weekSunday->format('M j, Y') . ' (Mon–Sun)';
+    $periodSummaryLabel = $weekMonday->format('M j') . ' – ' . $weekFriday->format('M j, Y') . ' (Mon–Fri)';
 }
 
 $officeFilter = (int) ($_GET['office_id'] ?? 0);
@@ -69,14 +87,21 @@ try {
             notes VARCHAR(255) NULL,
             advance_date DATE NOT NULL,
             status VARCHAR(20) NOT NULL DEFAULT "pending",
-            deducted_period_type VARCHAR(10) NULL,
-            deducted_period_start DATE NULL,
-            deducted_period_end DATE NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             INDEX idx_cash_adv_employee (employee_id),
             INDEX idx_cash_adv_status_date (status, advance_date)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ');
+    if ($pdo->query("SHOW COLUMNS FROM cash_advances LIKE 'deducted_period_type'")->rowCount() > 0) {
+        $pdo->exec('ALTER TABLE cash_advances DROP COLUMN deducted_period_type');
+    }
+    if ($pdo->query("SHOW COLUMNS FROM cash_advances LIKE 'deducted_period_start'")->rowCount() > 0) {
+        $pdo->exec('ALTER TABLE cash_advances DROP COLUMN deducted_period_start');
+    }
+    if ($pdo->query("SHOW COLUMNS FROM cash_advances LIKE 'deducted_period_end'")->rowCount() > 0) {
+        $pdo->exec('ALTER TABLE cash_advances DROP COLUMN deducted_period_end');
+    }
+    $pdo->exec("UPDATE cash_advances SET status = 'pending' WHERE status = 'accredited'");
     $hasCashAdvancesTable = true;
 } catch (Throwable $e) {
     $hasCashAdvancesTable = $pdo->query("SHOW TABLES LIKE 'cash_advances'")->rowCount() > 0;
@@ -183,24 +208,37 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
         ];
     }
 
-    // Auto-deduct pending cash advances on next eligible payroll period.
+    // Apply only approved (deducted) cash advances in the payroll week of the advance date.
     if ($hasCashAdvancesTable && !empty($byEmployee)) {
         $employeeIds = array_values(array_unique(array_map('intval', array_keys($byEmployee))));
         $ph = implode(',', array_fill(0, count($employeeIds), '?'));
         $loanStmt = $pdo->prepare("
-            SELECT id, employee_id, amount
+            SELECT id, employee_id, amount, advance_date, status
             FROM cash_advances
-            WHERE status = 'pending'
-              AND advance_date < ?
-              AND employee_id IN ({$ph})
+            WHERE employee_id IN ({$ph})
             ORDER BY advance_date, id
         ");
-        $loanStmt->execute(array_merge([$rangeStart], $employeeIds));
+        $loanStmt->execute($employeeIds);
         $loanRows = $loanStmt->fetchAll(PDO::FETCH_ASSOC);
-        $appliedLoanIds = [];
         foreach ($loanRows as $lr) {
             $eid = (int) ($lr['employee_id'] ?? 0);
             if (!isset($byEmployee[$eid])) {
+                continue;
+            }
+            if ((string) ($lr['status'] ?? '') !== 'deducted') {
+                continue;
+            }
+            $isDueThisPeriod = false;
+            if ($period === 'week') {
+                $targetWeek = eg_cash_advance_week_range((string) ($lr['advance_date'] ?? ''));
+                $isDueThisPeriod = $targetWeek
+                    && $targetWeek['start'] === $rangeStart
+                    && $targetWeek['end'] === $rangeEnd;
+            } else {
+                $ad = (string) ($lr['advance_date'] ?? '');
+                $isDueThisPeriod = $ad !== '' && $ad >= $rangeStart && $ad <= $rangeEnd;
+            }
+            if (!$isDueThisPeriod) {
                 continue;
             }
             $amt = (float) ($lr['amount'] ?? 0);
@@ -209,19 +247,6 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
             }
             $byEmployee[$eid]['deductions'] += $amt;
             $byEmployee[$eid]['loan_deduction'] += $amt;
-            $appliedLoanIds[] = (int) ($lr['id'] ?? 0);
-        }
-        if (!empty($appliedLoanIds)) {
-            $loanPh = implode(',', array_fill(0, count($appliedLoanIds), '?'));
-            $markStmt = $pdo->prepare("
-                UPDATE cash_advances
-                SET status = 'deducted',
-                    deducted_period_type = ?,
-                    deducted_period_start = ?,
-                    deducted_period_end = ?
-                WHERE id IN ({$loanPh})
-            ");
-            $markStmt->execute(array_merge([$period, $rangeStart, $rangeEnd], $appliedLoanIds));
         }
     }
 
@@ -357,7 +382,7 @@ $payrollDetailRowsHtmlJson = json_encode(
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Super Admin Payroll</title>
+    <title>EGoes Solutions</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -380,9 +405,9 @@ $payrollDetailRowsHtmlJson = json_encode(
         <main class="col-12 col-md-9 col-lg-10 py-4">
           <h3 class="mb-3 fw-bold">Payroll</h3>
           <p class="text-muted mb-4">
-            Totals from attendance (time in/out) for the selected <strong>week</strong> (Mon–Sun) or <strong>calendar month</strong>. Rates: per-employee override if &gt; 0, otherwise global default from
-            <a href="settings.php">Settings</a>. Deductions: stored amount or late minutes × deduction per minute (same rules as employee payslip). Pending <a href="loans.php">cash advances</a> are
-            automatically deducted on the next eligible payroll period.
+            Totals from attendance (time in/out) for the selected <strong>week</strong> (Mon–Fri) or <strong>calendar month</strong>. Rates: per-employee override if &gt; 0, otherwise global default from
+            <a href="settings.php">Settings</a>. Deductions: stored amount or late minutes × deduction per minute (same rules as employee payslip). Only approved (<code>deducted</code>) <a href="loans.php">cash advances</a>
+            are included during the payroll week of their advance date.
             <strong>Receipt status</strong> (pending / received) is saved per employee for this period.
           </p>
 
@@ -391,7 +416,7 @@ $payrollDetailRowsHtmlJson = json_encode(
               <div class="col-12 col-sm-6 col-md-4 col-lg-3">
                 <label class="form-label" for="periodSelect">Period</label>
                 <select class="form-select" name="period" id="periodSelect" aria-label="Week or month">
-                  <option value="week" <?= $period === 'week' ? ' selected' : '' ?>>Week (Mon–Sun)</option>
+                  <option value="week" <?= $period === 'week' ? ' selected' : '' ?>>Week (Mon–Fri)</option>
                   <option value="month" <?= $period === 'month' ? ' selected' : '' ?>>Month</option>
                 </select>
               </div>
@@ -406,7 +431,8 @@ $payrollDetailRowsHtmlJson = json_encode(
               <div class="col-12 col-sm-6 col-md-4 col-lg-3">
                 <label class="form-label" for="office_id">Office</label>
                 <select class="form-select" id="office_id" name="office_id">
-                  <option value="0" <?= $officeFilter === 0 ? ' selected' : '' ?>>All offices</option>
+                  <option value="" <?= $officeFilter === 0 ? ' selected' : '' ?>>Select office</option>
+                  <option value="0">All offices</option>
                   <?php foreach ($offices as $o): ?>
                     <option value="<?= (int) $o['id'] ?>" <?= $officeFilter === (int) $o['id'] ? ' selected' : '' ?>><?= htmlspecialchars($o['name']) ?></option>
                   <?php endforeach; ?>
@@ -424,8 +450,6 @@ $payrollDetailRowsHtmlJson = json_encode(
                       'month' => $monthValueForInput,
                       'office_id' => $officeFilter,
                   ]), ENT_QUOTES, 'UTF-8') ?>"
-                  target="_blank"
-                  rel="noopener"
                 >
                   Generate Department Summary
                 </a>
@@ -548,8 +572,6 @@ $payrollDetailRowsHtmlJson = json_encode(
                                 'office_id' => $officeFilter,
                             ]), ENT_QUOTES, 'UTF-8') ?>"
                             class="btn btn-sm btn-outline-secondary"
-                            target="_blank"
-                            rel="noopener"
                             title="Print payslip"
                             aria-label="Print payslip for <?= htmlspecialchars($pr['full_name'], ENT_QUOTES, 'UTF-8') ?>"
                           ><i class="bi bi-printer"></i></a>
@@ -603,7 +625,7 @@ $payrollDetailRowsHtmlJson = json_encode(
                   </div>
                 </div>
                 <div class="modal-footer">
-                  <a id="pdPrintPayslip" class="btn btn-primary" href="#" target="_blank" rel="noopener">Print payslip</a>
+                  <a id="pdPrintPayslip" class="btn btn-primary" href="#">Print payslip</a>
                   <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
                 </div>
               </div>
