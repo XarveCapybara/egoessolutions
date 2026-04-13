@@ -12,9 +12,11 @@ $positionSelect = $hasPositionCol ? ', e.position' : '';
 $selectedOfficeId = (int) ($_GET['office_id'] ?? 0);
 
 $sql = "
-    SELECT u.id, u.full_name, u.email, u.role, u.office_id, o.name AS office_name{$positionSelect}
+    SELECT u.id, u.full_name, u.email, u.role, u.office_id, o.name AS office_name{$positionSelect},
+           up.nickname AS profile_nickname, up.avatar AS profile_avatar, u.profile_image
     FROM users u
     LEFT JOIN employees e ON e.user_id = u.id
+    LEFT JOIN user_profiles up ON up.user_id = u.id
     LEFT JOIN offices o ON u.office_id = o.id
     WHERE u.role IN ('employee', 'admin')
     ORDER BY u.full_name
@@ -203,8 +205,15 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
                 <?php
                 $roleLabel = (($emp['role'] ?? '') === 'admin') ? 'Team leader' : 'Employee';
                 $positionText = ($hasPositionCol && !empty(trim((string) ($emp['position'] ?? '')))) ? trim($emp['position']) : '';
-                $rawHay = trim(($emp['full_name'] ?? '') . ' ' . ($emp['email'] ?? ''));
+                $displayName = !empty(trim((string) ($emp['profile_nickname'] ?? ''))) ? trim((string) $emp['profile_nickname']) : trim((string) ($emp['full_name'] ?? ''));
+                $rawHay = trim($displayName . ' ' . ($emp['email'] ?? ''));
                 $searchHay = function_exists('mb_strtolower') ? mb_strtolower($rawHay, 'UTF-8') : strtolower($rawHay);
+                $avatarSrc = '';
+                if (!empty($emp['profile_image'])) {
+                    $avatarSrc = $emp['profile_image'];
+                } elseif (!empty($emp['profile_avatar'])) {
+                    $avatarSrc = $emp['profile_avatar'];
+                }
                 ?>
                 <div
                   class="col-6 col-md-4 col-lg-3 eg-employee-filter-item"
@@ -222,7 +231,7 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
                         data-bs-toggle="modal"
                         data-bs-target="#changeRoleModal"
                         data-user-id="<?= (int) $emp['id'] ?>"
-                        data-user-name="<?= htmlspecialchars($emp['full_name']) ?>"
+                        data-user-name="<?= htmlspecialchars($displayName) ?>"
                         data-user-role="<?= htmlspecialchars($emp['role'] ?? 'employee') ?>"
                         title="Change Role"
                         aria-label="Change Role"
@@ -236,7 +245,7 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
                         data-bs-toggle="modal"
                         data-bs-target="#changePasswordModal"
                         data-user-id="<?= (int) $emp['id'] ?>"
-                        data-user-name="<?= htmlspecialchars($emp['full_name']) ?>"
+                        data-user-name="<?= htmlspecialchars($displayName) ?>"
                         data-user-role="<?= htmlspecialchars($roleLabel) ?>"
                         title="Change Password"
                         aria-label="Change Password"
@@ -245,9 +254,15 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
                       </button>
                     </div>
                     <div class="d-flex align-items-center mb-2">
-                      <div class="eg-avatar-circle me-2"></div>
+                      <div class="eg-avatar-circle me-2 overflow-hidden d-flex align-items-center justify-content-center">
+                        <?php if (!empty($avatarSrc)): ?>
+                          <img src="<?= htmlspecialchars($avatarSrc) ?>" alt="" width="40" height="40" style="width: 100%; height: 100%; object-fit: cover;" />
+                        <?php else: ?>
+                          <span class="bi bi-person-fill text-secondary"></span>
+                        <?php endif; ?>
+                      </div>
                       <div class="flex-grow-1 min-w-0 pe-5">
-                        <div class="fw-semibold"><?= htmlspecialchars($emp['full_name']) ?></div>
+                        <div class="fw-semibold"><?= htmlspecialchars($displayName) ?></div>
                         <div class="text-muted small"><?= htmlspecialchars($emp['email']) ?></div>
                         <div class="mt-1">
                           <span class="badge bg-secondary bg-opacity-25 text-dark small eg-js-role-badge"><?= htmlspecialchars($roleLabel) ?></span>

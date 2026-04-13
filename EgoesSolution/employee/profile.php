@@ -86,6 +86,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $address = trim($_POST['address'] ?? '');
     $phone = trim($_POST['phone'] ?? '');
     $email = trim($_POST['email'] ?? '');
+    $profileImagePath = '';
+
+    if (isset($_FILES['profile_image']) && is_uploaded_file($_FILES['profile_image']['tmp_name'])) {
+        $uploadError = $_FILES['profile_image']['error'];
+        if ($uploadError === UPLOAD_ERR_OK) {
+            $tmpFile = $_FILES['profile_image']['tmp_name'];
+            $imageInfo = @getimagesize($tmpFile);
+            $allowedTypes = [IMAGETYPE_JPEG => 'jpg', IMAGETYPE_PNG => 'png', IMAGETYPE_WEBP => 'webp', IMAGETYPE_GIF => 'gif'];
+            if ($imageInfo === false || !isset($allowedTypes[$imageInfo[2]])) {
+                $error = 'Invalid profile image file type. Use JPG, PNG, WEBP, or GIF.';
+                $editMode = true;
+            } else {
+                $extension = $allowedTypes[$imageInfo[2]];
+                $uploadDir = __DIR__ . '/../assets/images/profile';
+                if (!is_dir($uploadDir) && !mkdir($uploadDir, 0755, true) && !is_dir($uploadDir)) {
+                    $error = 'Unable to create profile image directory.';
+                    $editMode = true;
+                } else {
+                    $filename = 'profile_' . $userId . '_' . time() . '.' . $extension;
+                    $destination = $uploadDir . '/' . $filename;
+                    if (!move_uploaded_file($tmpFile, $destination)) {
+                        $error = 'Unable to save uploaded profile image.';
+                        $editMode = true;
+                    } else {
+                        $profileImagePath = '../assets/images/profile/' . $filename;
+                    }
+                }
+            }
+        } elseif ($uploadError !== UPLOAD_ERR_NO_FILE) {
+            $error = 'Profile image upload failed. Please try again.';
+            $editMode = true;
+        }
+    }
 
     if ($firstName === '') {
         $error = 'First name is required.';
@@ -100,7 +133,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $p['phone'] = $phone;
         $p['email'] = $email;
 
-        if ($userId > 0) {
+        if ($error === null && $userId > 0) {
             try {
                 $upsertStmt = $pdo->prepare('
                     INSERT INTO user_profiles (user_id, nickname, first_name, last_name, avatar, date_of_birth, gender, address, phone, email)
@@ -128,6 +161,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $p['phone'] !== '' ? $p['phone'] : null,
                     $p['email'] !== '' ? $p['email'] : null,
                 ]);
+                if ($profileImagePath !== '' && $userId > 0) {
+                    $updateImageStmt = $pdo->prepare('UPDATE users SET profile_image = ? WHERE id = ?');
+                    $updateImageStmt->execute([$profileImagePath, $userId]);
+                    $avatarUrl = $profileImagePath;
+                    $_SESSION['employee_profile']['avatar'] = $avatarUrl;
+                }
             } catch (PDOException $e) {
                 $error = 'Unable to save profile. Please try again.';
                 $editMode = true;
@@ -152,10 +191,18 @@ $profile = $p;
 $name = $_SESSION['display_name'] ?? 'Employee';
 $avatarUrl = $profile['avatar'] ?? null;
 $employeeCode = '';
+$profileImage = '';
 if ($userId > 0) {
     $employeeCodeStmt = $pdo->prepare('SELECT employee_code FROM employees WHERE user_id = ? LIMIT 1');
     $employeeCodeStmt->execute([$userId]);
     $employeeCode = (string) ($employeeCodeStmt->fetchColumn() ?: '');
+
+    $profileImageStmt = $pdo->prepare('SELECT profile_image FROM users WHERE id = ? LIMIT 1');
+    $profileImageStmt->execute([$userId]);
+    $profileImage = trim((string) ($profileImageStmt->fetchColumn() ?: ''));
+    if ($profileImage !== '') {
+        $avatarUrl = $profileImage;
+    }
 }
 
 $showName = $profile['nickname'] !== '' ? $profile['nickname'] : $profile['first_name'];
@@ -249,8 +296,12 @@ function eg_disp(?string $s): string
           <h2 class="eg-profile-ref-section-title">Personal details</h2>
 
           <?php if ($editMode): ?>
-            <form method="post" class="eg-profile-ref-form">
+            <form method="post" enctype="multipart/form-data" class="eg-profile-ref-form">
               <div class="eg-profile-ref-grid">
+                <div class="eg-profile-ref-field">
+                  <label class="eg-profile-ref-label" for="profile_image">Profile image</label>
+                  <input type="file" class="eg-profile-ref-input" id="profile_image" name="profile_image" accept="image/jpeg,image/png,image/webp,image/gif" />
+                </div>
                 <div class="eg-profile-ref-field">
                   <label class="eg-profile-ref-label" for="nickname">Nickname</label>
                   <input type="text" class="eg-profile-ref-input" id="nickname" name="nickname" value="<?= htmlspecialchars($profile['nickname']) ?>" placeholder="Display name" />

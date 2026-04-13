@@ -91,13 +91,13 @@ try {
     }
 
     // Employee must exist and belong to the same office as the admin.
-    $employeeStmt = $pdo->prepare('
-        SELECT e.id AS employee_id, u.id AS user_id, u.full_name, u.office_id
-        FROM users u
-        INNER JOIN employees e ON e.user_id = u.id
-        WHERE u.role = "employee" AND e.employee_code = ? AND u.is_active = 1
-        LIMIT 1
-    ');
+  $employeeStmt = $pdo->prepare('
+    SELECT e.id AS employee_id, u.id AS user_id, u.full_name, u.office_id
+    FROM users u
+    INNER JOIN employees e ON e.user_id = u.id
+    WHERE u.role IN (\'employee\', \'admin\') AND e.employee_code = ? AND u.is_active = 1
+    LIMIT 1
+');
     $employeeStmt->execute([$barcodeId]);
     $employee = $employeeStmt->fetch();
 

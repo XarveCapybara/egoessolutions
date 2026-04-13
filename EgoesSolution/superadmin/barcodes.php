@@ -60,12 +60,12 @@ if ($pdo->query("SHOW TABLES LIKE 'employees'")->rowCount()) {
               <div class="col-12 col-md-4 col-lg-3">
                 <label for="js-barcode-filter-office" class="form-label small text-muted mb-1">Office</label>
                 <select id="js-barcode-filter-office" class="form-select form-select-sm">
-                  <option value="0">All offices</option>
-                  <option value="-1">Unassigned</option>
-                  <?php foreach ($offices as $o): ?>
-                    <option value="<?= (int) $o['id'] ?>"><?= htmlspecialchars((string) $o['name']) ?></option>
-                  <?php endforeach; ?>
-                </select>
+                <option value="0">All offices</option>
+                <option value="-1" selected>Unassigned</option>  <!-- add "selected" here -->
+                <?php foreach ($offices as $o): ?>
+                  <option value="<?= (int) $o['id'] ?>"><?= htmlspecialchars((string) $o['name']) ?></option>
+                <?php endforeach; ?>
+              </select>
               </div>
               <div class="col-12 col-md-4 col-lg-3">
                 <label for="js-barcode-filter-role" class="form-label small text-muted mb-1">Role</label>
