@@ -147,7 +147,6 @@ ALTER TABLE employees ADD COLUMN rate_type VARCHAR(32) NULL DEFAULT NULL;</pre>
 
           <form id="settingsRatesForm" action="save_settings_rates.php" method="post" class="eg-panel p-4 mb-4">
             <h5 class="mb-3">Rates</h5>
-            <p class="text-muted small mb-3">Global rate defaults stored in <code>app_settings</code>.</p>
             <div class="row g-3 align-items-end mb-2">
               <div class="col-md-4">
                 <label for="default_hourly_rate" class="form-label">Amount per hour</label>
@@ -167,7 +166,6 @@ ALTER TABLE employees ADD COLUMN rate_type VARCHAR(32) NULL DEFAULT NULL;</pre>
             <hr class="my-4" />
 
             <h5 class="mb-3">Deductions</h5>
-            <p class="text-muted small mb-3">Late-deduction defaults stored in <code>app_settings</code>.</p>
             <div class="row g-3 align-items-end">
               <div class="col-md-4">
                 <label for="deduction_per_minute" class="form-label">Deduction per minute</label>
@@ -187,7 +185,6 @@ ALTER TABLE employees ADD COLUMN rate_type VARCHAR(32) NULL DEFAULT NULL;</pre>
             <?php if ($hasRateAmount && !empty($employees)): ?>
               <hr class="my-4" />
               <h5 class="mb-3">Per-user hourly rate</h5>
-              <p class="text-muted small mb-3">Overrides are saved for employee and admin accounts. Leave blank or enter <strong>0</strong> to use the global default rate. <code>rate_type</code> is set to <strong>hourly</strong> when a positive value is entered.</p>
               <div class="eg-panel p-3 mb-3 bg-light border-0">
                 <div class="row g-2 align-items-end flex-wrap">
                   <div class="col-12 col-md-4 col-lg-3">
@@ -222,7 +219,7 @@ ALTER TABLE employees ADD COLUMN rate_type VARCHAR(32) NULL DEFAULT NULL;</pre>
                     <button type="button" class="btn btn-sm btn-outline-secondary" id="js-settings-filter-clear">Clear</button>
                   </div>
                 </div>
-                <p class="text-muted small mb-0 mt-2">Filtering happens in the browser — no page reload.</p>
+                
               </div>
               <p id="settingsRatesFilterNoMatches" class="text-muted small d-none mb-2">No one matches these filters. Try clearing filters.</p>
               <div class="table-responsive">
@@ -291,7 +288,6 @@ ALTER TABLE employees ADD COLUMN rate_type VARCHAR(32) NULL DEFAULT NULL;</pre>
           <form action="save_payroll_deduction_types.php" method="post" class="eg-panel p-4 mb-4">
             <h5 class="mb-2">Payroll deduction lines</h5>
             <p class="text-muted small mb-3">
-              Labels and default amounts shown on printable payslips (SSS, PhilHealth, etc.). Stored in <code>payroll_deduction_types</code>.
             </p>
             <?php if (empty($payrollDeductionTypes)): ?>
               <p class="text-muted small mb-0">Could not load deduction lines. Check the database connection or run <code>scripts/create_payroll_deduction_types.sql</code>.</p>

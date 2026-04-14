@@ -404,12 +404,7 @@ $payrollDetailRowsHtmlJson = json_encode(
 
         <main class="col-12 col-md-9 col-lg-10 py-4">
           <h3 class="mb-3 fw-bold">Payroll</h3>
-          <p class="text-muted mb-4">
-            Totals from attendance (time in/out) for the selected <strong>week</strong> (Mon–Fri) or <strong>calendar month</strong>. Rates: per-employee override if &gt; 0, otherwise global default from
-            <a href="settings.php">Settings</a>. Deductions: stored amount or late minutes × deduction per minute (same rules as employee payslip). Only approved (<code>deducted</code>) <a href="loans.php">cash advances</a>
-            are included during the payroll week of their advance date.
-            <strong>Receipt status</strong> (pending / received) is saved per employee for this period.
-          </p>
+          
 
           <form method="get" action="payroll.php" class="eg-panel p-3 mb-3" id="payrollFilterForm">
             <div class="row g-3 align-items-end">

@@ -103,7 +103,7 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
             </div>
 
             <div id="employeeFormPanel">
-              <p class="text-muted small mb-3">Only SuperAdmin can create employee accounts.</p>
+              
               <form action="createemployee.php" method="post" class="row g-3">
                 <input type="hidden" name="office_id" value="<?= (int) $selectedOfficeId ?>" />
                 <div class="col-md-4">
@@ -118,18 +118,11 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
                 <div class="col-md-2 d-grid">
                   <button type="submit" class="btn btn-primary">Create Employee</button>
                 </div>
-                <div class="col-12">
-                  <?php if ($selectedOfficeName !== null): ?>
-                    <div class="text-muted small">Assigning to office: <strong><?= htmlspecialchars($selectedOfficeName) ?></strong></div>
-                  <?php else: ?>
-                    <div class="text-muted small">Tip: open this page from an office overview to auto-assign office.</div>
-                  <?php endif; ?>
-                </div>
               </form>
             </div>
 
             <div id="teamLeaderFormPanel" class="d-none">
-              <p class="text-muted small mb-3">Creates a team leader login with account type <strong>admin</strong>.</p>
+              
               <form action="createteamleader.php" method="post" class="row g-3">
                 <input type="hidden" name="office_id" value="<?= (int) $selectedOfficeId ?>" />
                 <div class="col-md-4">
@@ -144,13 +137,7 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
                 <div class="col-md-2 d-grid">
                   <button type="submit" class="btn btn-primary">Create Team Leader</button>
                 </div>
-                <div class="col-12">
-                  <?php if ($selectedOfficeName !== null): ?>
-                    <div class="text-muted small">Assigning to office: <strong><?= htmlspecialchars($selectedOfficeName) ?></strong></div>
-                  <?php else: ?>
-                    <div class="text-muted small">Tip: open this page from an office overview to auto-assign office.</div>
-                  <?php endif; ?>
-                </div>
+              
               </form>
             </div>
           </div>
@@ -189,7 +176,6 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="js-filter-clear">Clear</button>
               </div>
             </div>
-            <p class="text-muted small mb-0 mt-2">Filtering happens in the browser — no page reload.</p>
           </div>
 
           <div class="row g-3" id="employee-grid">

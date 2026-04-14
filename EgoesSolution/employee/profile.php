@@ -205,8 +205,8 @@ if ($userId > 0) {
     }
 }
 
-$showName = $profile['nickname'] !== '' ? $profile['nickname'] : $profile['first_name'];
-$fullDisplayName = trim($profile['first_name'] . ' ' . ($profile['last_name'] ?? ''));
+$showName = $profile['nickname'] !== '' ? $profile['nickname'] : $profile['last_name'];
+$fullDisplayName = trim(($profile['first_name'] . ' ' . ($profile['last_name'] ?? '')));
 if ($fullDisplayName === '') {
     $fullDisplayName = '—';
 }
@@ -307,12 +307,12 @@ function eg_disp(?string $s): string
                   <input type="text" class="eg-profile-ref-input" id="nickname" name="nickname" value="<?= htmlspecialchars($profile['nickname']) ?>" placeholder="Display name" />
                 </div>
                 <div class="eg-profile-ref-field">
-                  <label class="eg-profile-ref-label" for="first_name">First name</label>
-                  <input type="text" class="eg-profile-ref-input" id="first_name" name="first_name" value="<?= htmlspecialchars($profile['first_name']) ?>" required />
-                </div>
-                <div class="eg-profile-ref-field">
                   <label class="eg-profile-ref-label" for="last_name">Last name</label>
                   <input type="text" class="eg-profile-ref-input" id="last_name" name="last_name" value="<?= htmlspecialchars($profile['last_name'] ?? '') ?>" />
+                </div>
+                <div class="eg-profile-ref-field">
+                  <label class="eg-profile-ref-label" for="first_name">First name</label>
+                  <input type="text" class="eg-profile-ref-input" id="first_name" name="first_name" value="<?= htmlspecialchars($profile['first_name']) ?>" required />
                 </div>
                 <div class="eg-profile-ref-field">
                   <label class="eg-profile-ref-label" for="date_of_birth">Date of birth</label>

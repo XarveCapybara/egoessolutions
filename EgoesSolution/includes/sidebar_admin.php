@@ -14,7 +14,7 @@ $currentPage = basename($_SERVER['PHP_SELF'] ?? '');
       <i class="bi bi-upc-scan"></i>
       <span>Scanning</span>
     </a>
-    <a href="payroll.php" class="eg-sidebar-link <?= $currentPage === 'payroll.php' ? 'active' : '' ?>">
+    <a href="payslip.php" class="eg-sidebar-link <?= in_array($currentPage, ['payslip.php', 'payroll.php'], true) ? 'active' : '' ?>">
       <i class="bi bi-currency-dollar"></i>
       <span>Payslip</span>
     </a>

@@ -186,8 +186,7 @@ $cashAdvances = $pdo->query('
         <?php include __DIR__ . '/../includes/sidebar_superadmin.php'; ?>
         <main class="col-12 col-md-9 col-lg-10 py-4">
           <h3 class="fw-bold mb-3">Cash Advances</h3>
-          <p class="text-muted mb-4">Create cash advances for employees. Use <strong>Approve</strong> to mark an entry as deducted; only approved entries are included in payroll and payslip.</p>
-
+          
           <form method="post" class="eg-panel p-3 mb-4">
             <h5 class="mb-3">Add Cash Advance</h5>
             <div class="row g-3">
