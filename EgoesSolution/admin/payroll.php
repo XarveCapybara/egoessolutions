@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 if (($_SESSION['role'] ?? '') !== 'admin') {
     header('Location: ../auth/login.php');
@@ -213,6 +213,7 @@ $weeklyNet = $weeklyGross - $weeklyDeductions;
       integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
       crossorigin="anonymous"
     ></script>
+    <?php include __DIR__ . '/../includes/footer.php'; ?>
   </body>
 </html>
 

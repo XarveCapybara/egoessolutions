@@ -4,37 +4,45 @@ if (!isset($name) || $name === '') {
     $name = $_SESSION['display_name'] ?? 'User';
 }
 
-// Get last name for display
-$lastName = '';
-$userId = (int) ($_SESSION['user_id'] ?? 0);
-if ($userId > 0) {
-    global $pdo;
-    if (isset($pdo)) {
-        try {
-            $lastNameStmt = $pdo->prepare('SELECT last_name FROM user_profiles WHERE user_id = ? LIMIT 1');
-            $lastNameStmt->execute([$userId]);
-            $lastNameResult = $lastNameStmt->fetchColumn();
-            if ($lastNameResult) {
-                $lastName = (string) $lastNameResult;
-            }
-        } catch (Exception $e) {
-            // Continue with empty last name if query fails
-        }
-    }
-}
+// Display name logic
+$role = $_SESSION['role'] ?? '';
 
 $role = $_SESSION['role'] ?? '';
-$prefix = 'User-';
+$prefix = '';
 if ($role === 'superadmin') {
-    $prefix = 'SuperAdmin-';
+    $prefix = 'SuperAdmin - ';
 } elseif ($role === 'admin') {
-    $prefix = 'Admin-';
+    $prefix = 'Admin - ';
+} elseif ($role === 'employee') {
+    $prefix = 'Employee - ';
 }
-$isProfileHeader = in_array($role, ['admin', 'superadmin'], true);
-$displayName = $lastName !== '' ? $lastName : $name;
+$isProfileHeader = in_array($role, ['admin', 'superadmin', 'employee'], true);
+
+// Build display name: extract from full name
+// Database format is "Lastname, Firstname" so first name is after the comma
+$parts = explode(',', $name, 2);
+if (count($parts) > 1) {
+    $displayName = trim($parts[1]);
+} else {
+    $nameParts = explode(' ', trim($name));
+    $displayName = $nameParts[0];
+}
 ?>
+<script>
+// Restore sidebar state BEFORE paint to eliminate flicker
+(function(){
+  if(localStorage.getItem('eg_sidebar_collapsed')==='1'){
+    document.body.classList.add('sidebar-collapsed','no-sidebar-transition');
+    requestAnimationFrame(function(){
+      requestAnimationFrame(function(){
+        document.body.classList.remove('no-sidebar-transition');
+      });
+    });
+  }
+})();
+</script>
 <header class="eg-topbar d-flex justify-content-between align-items-center">
-  <div class="d-flex align-items-center">
+  <div class="d-flex align-items-center gap-3">
     <img src="../assets/images/egoes-logo.png?v=3" alt="E-GOES Solutions" class="eg-system-logo" />
   </div>
   <?php if ($isProfileHeader): ?>

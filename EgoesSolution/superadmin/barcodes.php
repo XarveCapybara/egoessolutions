@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 if (($_SESSION['role'] ?? '') !== 'superadmin') {
     header('Location: ../auth/login.php');
@@ -325,6 +325,7 @@ if ($pdo->query("SHOW TABLES LIKE 'employees'")->rowCount()) {
         });
       })();
     </script>
+    <?php include __DIR__ . '/../includes/footer.php'; ?>
   </body>
 </html>
 

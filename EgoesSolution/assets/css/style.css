@@ -1198,4 +1198,107 @@ body .eg-profile-container--ref {
   }
 }
 
+/* ============================================================
+   Sidebar toggle button
+   ============================================================ */
+.eg-sidebar-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: none;
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  font-size: 1.25rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.18s ease, transform 0.18s ease;
+}
+
+.eg-sidebar-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.eg-sidebar-toggle-btn:active {
+  transform: scale(0.93);
+}
+
+.eg-sidebar-toggle-btn-dark {
+  background: rgba(29, 78, 216, 0.1);
+  color: #1e3a8a;
+}
+.eg-sidebar-toggle-btn-dark:hover {
+  background: rgba(29, 78, 216, 0.2);
+}
+
+/* ============================================================
+   Sidebar collapsed state  (triggered by body.sidebar-collapsed)
+   ============================================================ */
+
+/* Suppress ALL transitions on initial page load to prevent flash */
+body.no-sidebar-transition #eg-sidebar,
+body.no-sidebar-transition #eg-sidebar + main {
+  transition: none !important;
+}
+
+#eg-sidebar {
+  transition: max-width 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+              min-width 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+              flex      0.32s cubic-bezier(0.4, 0, 0.2, 1),
+              padding   0.32s cubic-bezier(0.4, 0, 0.2, 1),
+              border    0.32s ease;
+  overflow: hidden;
+}
+
+/* Main content: animate width change in sync with sidebar */
+#eg-sidebar + main {
+  transition: max-width 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+              flex      0.32s cubic-bezier(0.4, 0, 0.2, 1),
+              width     0.32s cubic-bezier(0.4, 0, 0.2, 1);
+  /* Allow smooth flex-grow and prevent wrapping to next line during transition */
+  flex: 1 1 0% !important;
+  width: auto !important;
+  max-width: 100% !important;
+}
+
+body.sidebar-collapsed #eg-sidebar {
+  max-width: 80px !important;
+  min-width: 80px !important;
+  flex: 0 0 80px !important;
+  padding: 1rem 0.5rem !important;
+}
+
+body.sidebar-collapsed #eg-sidebar .eg-sidebar-brand {
+  justify-content: center !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin-bottom: 1rem;
+}
+
+body.sidebar-collapsed #eg-sidebar .eg-sidebar-role {
+  display: none;
+}
+
+body.sidebar-collapsed #eg-sidebar .eg-sidebar-link {
+  justify-content: center;
+  padding: 0.75rem 0;
+  border-radius: 0.5rem;
+}
+
+body.sidebar-collapsed #eg-sidebar .eg-sidebar-link span {
+  display: none;
+}
+
+body.sidebar-collapsed #eg-sidebar .eg-sidebar-link i {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+body.sidebar-collapsed #eg-sidebar + main {
+  max-width: 100% !important;
+  flex: 1 1 0% !important;
+}
+
 

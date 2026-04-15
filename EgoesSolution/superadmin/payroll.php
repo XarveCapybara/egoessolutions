@@ -376,6 +376,11 @@ $payrollDetailRowsHtmlJson = json_encode(
     (object) $payrollDetailRowsHtmlById,
     JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT
 );
+
+// Build ordered employee ID list for payslip navigation
+$payslipEmployeeIdList = implode(',', array_map(function ($pr) {
+    return (int) $pr['employee_id'];
+}, $payrollRows));
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -437,9 +442,10 @@ $payrollDetailRowsHtmlJson = json_encode(
                 <button type="submit" class="btn btn-primary">Apply</button>
               </div>
               <div class="col-12 col-md-6 col-lg-3 d-grid">
-                <a
-                  class="btn btn-outline-success"
-                  href="payroll_department_summary.php?<?= htmlspecialchars(http_build_query([
+                <button
+                  type="button"
+                  class="btn btn-outline-success js-open-dept-summary-modal"
+                  data-summary-url="payroll_department_summary.php?<?= htmlspecialchars(http_build_query([
                       'period' => $period,
                       'week' => $weekStartStr,
                       'month' => $monthValueForInput,
@@ -447,7 +453,7 @@ $payrollDetailRowsHtmlJson = json_encode(
                   ]), ENT_QUOTES, 'UTF-8') ?>"
                 >
                   Generate Department Summary
-                </a>
+                </button>
               </div>
             </div>
             <p class="text-muted small mb-0 mt-2">
@@ -517,18 +523,29 @@ $payrollDetailRowsHtmlJson = json_encode(
               <p class="text-muted small mb-0">No attendance in this period for the selected filter. Try another week, month, or office.</p>
             <?php else: ?>
               <div class="table-responsive">
-                <table class="table table-sm align-middle mb-0">
+                <table class="table table-sm table-hover align-middle mb-0" style="table-layout: fixed; width: 100%;">
+                  <colgroup>
+                    <col style="width: 18%;" />
+                    <col style="width: 12%;" />
+                    <col style="width: 10%;" />
+                    <col style="width: 8%;" />
+                    <col style="width: 11%;" />
+                    <col style="width: 11%;" />
+                    <col style="width: 11%;" />
+                    <col style="width: 5%;" />
+                    <col style="width: 14%;" />
+                  </colgroup>
                   <thead class="table-light">
                     <tr>
                       <th>Employee</th>
                       <th>Office</th>
-                      <th class="text-end">Hourly rate</th>
+                      <th class="text-end">Hourly Rate</th>
                       <th class="text-end">Hours</th>
                       <th class="text-end">Gross</th>
                       <th class="text-end">Deductions</th>
-                      <th class="text-end">Net</th>
-                      <th class="text-center" style="width: 4rem;">Payslip</th>
-                      <th style="min-width: 11rem;">Receipt</th>
+                      <th class="text-end">Net Pay</th>
+                      <th class="text-center">Payslip</th>
+                      <th>Receipt</th>
                     </tr>
                   </thead>
                   <tbody id="payrollEmployeeTableBody">
@@ -551,25 +568,27 @@ $payrollDetailRowsHtmlJson = json_encode(
                             <?= htmlspecialchars($pr['full_name']) ?>
                           </button>
                         </td>
-                        <td><?= htmlspecialchars($pr['office_name']) ?></td>
-                        <td class="text-end"><?= number_format($pr['hourly_rate'], 2) ?></td>
-                        <td class="text-end"><?= number_format($pr['hours'], 2) ?></td>
-                        <td class="text-end"><?= number_format($pr['gross'], 2) ?></td>
-                        <td class="text-end"><?= number_format($pr['deductions'], 2) ?></td>
-                        <td class="text-end fw-semibold"><?= number_format($pr['net'], 2) ?></td>
+                        <td class="text-truncate"><?= htmlspecialchars($pr['office_name']) ?></td>
+                        <td class="text-end" style="white-space: nowrap;"><?= number_format($pr['hourly_rate'], 2) ?></td>
+                        <td class="text-end" style="white-space: nowrap;"><?= number_format($pr['hours'], 2) ?></td>
+                        <td class="text-end" style="white-space: nowrap;"><?= number_format($pr['gross'], 2) ?></td>
+                        <td class="text-end" style="white-space: nowrap;"><?= number_format($pr['deductions'], 2) ?></td>
+                        <td class="text-end fw-semibold" style="white-space: nowrap;"><?= number_format($pr['net'], 2) ?></td>
                         <td class="text-center">
-                          <a
-                            href="payslip_print.php?<?= htmlspecialchars(http_build_query([
+                          <button
+                            type="button"
+                            class="btn btn-sm btn-outline-secondary js-open-payslip-modal"
+                            data-payslip-url="payslip_print.php?<?= htmlspecialchars(http_build_query([
                                 'employee_id' => (int) $pr['employee_id'],
                                 'period' => $period,
                                 'week' => $weekStartStr,
                                 'month' => $monthValueForInput,
                                 'office_id' => $officeFilter,
+                                'employees' => $payslipEmployeeIdList,
                             ]), ENT_QUOTES, 'UTF-8') ?>"
-                            class="btn btn-sm btn-outline-secondary"
                             title="Print payslip"
                             aria-label="Print payslip for <?= htmlspecialchars($pr['full_name'], ENT_QUOTES, 'UTF-8') ?>"
-                          ><i class="bi bi-printer"></i></a>
+                          ><i class="bi bi-printer"></i></button>
                         </td>
                         <td>
                           <form method="post" action="save_payroll_receipt.php" class="d-flex flex-wrap align-items-center gap-1">
@@ -578,11 +597,10 @@ $payrollDetailRowsHtmlJson = json_encode(
                             <input type="hidden" name="month" value="<?= htmlspecialchars($monthValueForInput) ?>" />
                             <input type="hidden" name="office_id" value="<?= (int) $officeFilter ?>" />
                             <input type="hidden" name="employee_id" value="<?= (int) $pr['employee_id'] ?>" />
-                            <select name="status" class="form-select form-select-sm" style="width: auto; min-width: 7.5rem;" aria-label="Receipt status for <?= htmlspecialchars($pr['full_name']) ?>">
+                            <select name="status" class="form-select form-select-sm" style="width: auto; min-width: 7.5rem;" aria-label="Receipt status for <?= htmlspecialchars($pr['full_name']) ?>" onchange="this.form.submit()">
                               <option value="pending" <?= !$recv ? ' selected' : '' ?>>Pending</option>
                               <option value="received" <?= $recv ? ' selected' : '' ?>>Received</option>
                             </select>
-                            <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
                           </form>
                         </td>
                       </tr>
@@ -620,8 +638,38 @@ $payrollDetailRowsHtmlJson = json_encode(
                   </div>
                 </div>
                 <div class="modal-footer">
-                  <a id="pdPrintPayslip" class="btn btn-primary" href="#">Print payslip</a>
+                  <button type="button" id="pdPrintPayslip" class="btn btn-primary js-open-payslip-modal" data-payslip-url="#">Print payslip</button>
                   <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Payslip iframe modal -->
+          <div class="modal" id="payslipIframeModal" tabindex="-1" aria-labelledby="payslipIframeModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-xl modal-dialog-centered" style="max-width: 900px;">
+              <div class="modal-content" style="height: 85vh;">
+                <div class="modal-header py-2">
+                  <h5 class="modal-title" id="payslipIframeModalLabel">Payslip Preview</h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-0" style="overflow: hidden;">
+                  <iframe id="payslipIframe" src="about:blank" style="width: 100%; height: 100%; border: none;"></iframe>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Department Summary iframe modal -->
+          <div class="modal" id="deptSummaryIframeModal" tabindex="-1" aria-labelledby="deptSummaryIframeModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-xl modal-dialog-centered" style="max-width: 960px;">
+              <div class="modal-content" style="height: 85vh;">
+                <div class="modal-header py-2">
+                  <h5 class="modal-title" id="deptSummaryIframeModalLabel">Department Summary</h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-0" style="overflow: hidden;">
+                  <iframe id="deptSummaryIframe" src="about:blank" style="width: 100%; height: 100%; border: none;"></iframe>
                 </div>
               </div>
             </div>
@@ -673,6 +721,7 @@ $payrollDetailRowsHtmlJson = json_encode(
           week: <?= json_encode($weekStartStr, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>,
           month: <?= json_encode($monthValueForInput, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>,
           office_id: String(<?= (int) $officeFilter ?>),
+          employees: <?= json_encode($payslipEmployeeIdList, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>,
         });
         const pdPrintPayslip = document.getElementById('pdPrintPayslip');
         const emptyRow =
@@ -684,7 +733,7 @@ $payrollDetailRowsHtmlJson = json_encode(
           const id = String(btn.getAttribute('data-employee-id') || '');
           if (pdPrintPayslip) {
             payslipBase.set('employee_id', id);
-            pdPrintPayslip.href = 'payslip_print.php?' + payslipBase.toString();
+            pdPrintPayslip.setAttribute('data-payslip-url', 'payslip_print.php?' + payslipBase.toString());
           }
           const html = detailRowsHtml[id];
           nameEl.textContent = btn.getAttribute('data-employee-name') || 'Employee';
@@ -700,6 +749,57 @@ $payrollDetailRowsHtmlJson = json_encode(
           modal.show();
         });
       })();
+
+      // Payslip iframe modal logic
+      (function () {
+        var iframeModalEl = document.getElementById('payslipIframeModal');
+        var iframe = document.getElementById('payslipIframe');
+        if (!iframeModalEl || !iframe) return;
+        var iframeModal = bootstrap.Modal.getOrCreateInstance(iframeModalEl);
+
+        document.addEventListener('click', function (e) {
+          var btn = e.target.closest('.js-open-payslip-modal');
+          if (!btn) return;
+          e.preventDefault();
+          var url = btn.getAttribute('data-payslip-url');
+          if (!url || url === '#') return;
+          iframe.src = url;
+          // Close any other open modals first
+          var openModals = document.querySelectorAll('.modal.show');
+          openModals.forEach(function (m) {
+            var inst = bootstrap.Modal.getInstance(m);
+            if (inst) inst.hide();
+          });
+          setTimeout(function () { iframeModal.show(); }, 200);
+        });
+
+        iframeModalEl.addEventListener('hidden.bs.modal', function () {
+          iframe.src = 'about:blank';
+        });
+      })();
+
+      // Department Summary iframe modal logic
+      (function () {
+        var modalEl = document.getElementById('deptSummaryIframeModal');
+        var iframe = document.getElementById('deptSummaryIframe');
+        if (!modalEl || !iframe) return;
+        var modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+
+        document.addEventListener('click', function (e) {
+          var btn = e.target.closest('.js-open-dept-summary-modal');
+          if (!btn) return;
+          e.preventDefault();
+          var url = btn.getAttribute('data-summary-url');
+          if (!url || url === '#') return;
+          iframe.src = url;
+          modal.show();
+        });
+
+        modalEl.addEventListener('hidden.bs.modal', function () {
+          iframe.src = 'about:blank';
+        });
+      })();
     </script>
+    <?php include __DIR__ . '/../includes/footer.php'; ?>
   </body>
 </html>

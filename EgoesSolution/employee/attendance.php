@@ -26,10 +26,7 @@ $name = $_SESSION['display_name'] ?? 'Employee';
     <link rel="stylesheet" href="../assets/css/style.css" />
   </head>
   <body class="bg-light">
-    <?php
-    $name = $_SESSION['display_name'] ?? 'Employee';
-    include __DIR__ . '/includes/header.php';
-    ?>
+    <?php include __DIR__ . '/../includes/header.php'; ?>
 
     <div class="container-fluid py-4">
       <h4 class="mb-3">Attendance History (Prototype)</h4>

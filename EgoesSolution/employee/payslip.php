@@ -291,10 +291,7 @@ $fmtMoney = static function (float $n): string {
     <link rel="stylesheet" href="../assets/css/payslip-print.css?v=29" />
   </head>
   <body class="bg-light">
-    <?php
-    $name = $_SESSION['display_name'] ?? 'Employee';
-    include __DIR__ . '/includes/header.php';
-    ?>
+    <?php include __DIR__ . '/../includes/header.php'; ?>
 
     <div class="container-fluid py-4">
       <nav class="eg-employee-nav mb-4">

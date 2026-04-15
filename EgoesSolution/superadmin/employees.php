@@ -11,17 +11,31 @@ $hasPositionCol = $pdo->query("SHOW COLUMNS FROM employees LIKE 'position'")->ro
 $positionSelect = $hasPositionCol ? ', e.position' : '';
 $selectedOfficeId = (int) ($_GET['office_id'] ?? 0);
 
-$sql = "
-    SELECT u.id, u.full_name, u.email, u.role, u.office_id, o.name AS office_name{$positionSelect},
-           up.nickname AS profile_nickname, up.avatar AS profile_avatar, u.profile_image
-    FROM users u
-    LEFT JOIN employees e ON e.user_id = u.id
-    LEFT JOIN user_profiles up ON up.user_id = u.id
-    LEFT JOIN offices o ON u.office_id = o.id
-    WHERE u.role IN ('employee', 'admin')
-    ORDER BY u.full_name
-";
-$employees = $pdo->query($sql)->fetchAll();
+$hasOfficeFilter = isset($_GET['office_id']);
+
+$employees = [];
+if ($hasOfficeFilter) {
+    $sql = "
+        SELECT u.id, u.full_name, u.email, u.role, u.office_id, o.name AS office_name{$positionSelect},
+               up.nickname AS profile_nickname, up.avatar AS profile_avatar, u.profile_image
+        FROM users u
+        LEFT JOIN employees e ON e.user_id = u.id
+        LEFT JOIN user_profiles up ON up.user_id = u.id
+        LEFT JOIN offices o ON u.office_id = o.id
+        WHERE u.role IN ('employee', 'admin')
+    ";
+    $params = [];
+    if ($selectedOfficeId === -1) {
+        $sql .= ' AND (u.office_id IS NULL OR u.office_id = 0)';
+    } elseif ($selectedOfficeId > 0) {
+        $sql .= ' AND u.office_id = ?';
+        $params[] = $selectedOfficeId;
+    }
+    $sql .= ' ORDER BY u.full_name';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $employees = $stmt->fetchAll();
+}
 
 $offices = $pdo->query('SELECT id, name FROM offices ORDER BY name')->fetchAll();
 $selectedOfficeName = null;
@@ -106,8 +120,11 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
               
               <form action="createemployee.php" method="post" class="row g-3">
                 <input type="hidden" name="office_id" value="<?= (int) $selectedOfficeId ?>" />
-                <div class="col-md-4">
-                  <input class="form-control" name="full_name" placeholder="Full Name" required />
+                <div class="col-md-2">
+                  <input class="form-control" name="last_name" placeholder="Last Name" required />
+                </div>
+                <div class="col-md-2">
+                  <input class="form-control" name="first_name" placeholder="First Name" required />
                 </div>
                 <div class="col-md-3">
                   <input type="email" class="form-control" name="email" placeholder="Email" required />
@@ -125,8 +142,11 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
               
               <form action="createteamleader.php" method="post" class="row g-3">
                 <input type="hidden" name="office_id" value="<?= (int) $selectedOfficeId ?>" />
-                <div class="col-md-4">
-                  <input class="form-control" name="full_name" placeholder="Full Name" required />
+                <div class="col-md-2">
+                  <input class="form-control" name="last_name" placeholder="Last Name" required />
+                </div>
+                <div class="col-md-2">
+                  <input class="form-control" name="first_name" placeholder="First Name" required />
                 </div>
                 <div class="col-md-3">
                   <input type="email" class="form-control" name="email" placeholder="Email" required />
@@ -146,13 +166,16 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
             <div class="row g-2 align-items-end flex-wrap">
               <div class="col-12 col-md-4 col-lg-3">
                 <label for="js-filter-office" class="form-label small text-muted mb-1">Office</label>
-                <select id="js-filter-office" class="form-select form-select-sm" aria-label="Filter by office">
-                  <option value="0">All offices</option>
-                  <option value="-1" selected>Unassigned</option>
-                  <?php foreach ($offices as $o): ?>
-                    <option value="<?= (int) $o['id'] ?>"><?= htmlspecialchars($o['name']) ?></option>
-                  <?php endforeach; ?>
-                </select>
+                <form method="get" action="employees.php" id="officeFilterForm">
+                  <select id="js-filter-office" name="office_id" class="form-select form-select-sm" aria-label="Filter by office" onchange="this.form.submit()">
+                    <option value="" <?= !$hasOfficeFilter ? 'selected' : '' ?>>— Select an office —</option>
+                    <option value="0" <?= $hasOfficeFilter && $selectedOfficeId === 0 ? 'selected' : '' ?>>All offices</option>
+                    <option value="-1" <?= $hasOfficeFilter && $selectedOfficeId === -1 ? 'selected' : '' ?>>Unassigned</option>
+                    <?php foreach ($offices as $o): ?>
+                      <option value="<?= (int) $o['id'] ?>" <?= $selectedOfficeId === (int) $o['id'] ? 'selected' : '' ?>><?= htmlspecialchars($o['name']) ?></option>
+                    <?php endforeach; ?>
+                  </select>
+                </form>
               </div>
               <div class="col-12 col-sm-6 col-md-4 col-lg-3">
                 <label for="js-filter-role" class="form-label small text-muted mb-1">Role</label>
@@ -179,9 +202,13 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
           </div>
 
           <div class="row g-3" id="employee-grid">
-            <?php if (empty($employees)): ?>
+            <?php if (!$hasOfficeFilter): ?>
               <div class="col-12">
-                <p class="text-muted">No employees or team leaders yet. Create one above.</p>
+                <p class="text-muted"><i class="bi bi-funnel me-1"></i>Select an office above to view employees.</p>
+              </div>
+            <?php elseif (empty($employees)): ?>
+              <div class="col-12">
+                <p class="text-muted">No employees or team leaders found for this filter.</p>
               </div>
             <?php else: ?>
               <div class="col-12 d-none" id="employee-filter-no-matches">
@@ -189,10 +216,24 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
               </div>
               <?php foreach ($employees as $emp): ?>
                 <?php
-                $roleLabel = (($emp['role'] ?? '') === 'admin') ? 'Team leader' : 'Employee';
                 $positionText = ($hasPositionCol && !empty(trim((string) ($emp['position'] ?? '')))) ? trim($emp['position']) : '';
-                $displayName = !empty(trim((string) ($emp['profile_nickname'] ?? ''))) ? trim((string) $emp['profile_nickname']) : trim((string) ($emp['full_name'] ?? ''));
-                $rawHay = trim($displayName . ' ' . ($emp['email'] ?? ''));
+                $roleLabel = (($emp['role'] ?? '') === 'admin') ? 'Team leader' : 'Employee';
+                
+                // Get display name: nickname > first name (part after comma) > full name
+                if (!empty(trim((string) ($emp['profile_nickname'] ?? '')))) {
+                    $displayName = trim($emp['profile_nickname']);
+                } else {
+                    $fullRaw = trim((string) ($emp['full_name'] ?? ''));
+                    if (strpos($fullRaw, ',') !== false) {
+                        $p = explode(',', $fullRaw, 2);
+                        $displayName = trim($p[1] ?? $p[0]);
+                    } else {
+                        $p = explode(' ', $fullRaw, 2);
+                        $displayName = $p[0];
+                    }
+                }
+                
+                $rawHay = trim(($emp['full_name'] ?? '') . ' ' . $displayName . ' ' . ($emp['email'] ?? ''));
                 $searchHay = function_exists('mb_strtolower') ? mb_strtolower($rawHay, 'UTF-8') : strtolower($rawHay);
                 $avatarSrc = '';
                 if (!empty($emp['profile_image'])) {
@@ -554,5 +595,6 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
         }
       })();
     </script>
+    <?php include __DIR__ . '/../includes/footer.php'; ?>
   </body>
 </html>

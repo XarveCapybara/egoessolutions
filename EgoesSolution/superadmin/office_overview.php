@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 if (($_SESSION['role'] ?? '') !== 'superadmin') {
     header('Location: ../auth/login.php');
@@ -474,5 +474,6 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
         });
       })();
     </script>
+    <?php include __DIR__ . '/../includes/footer.php'; ?>
   </body>
 </html>

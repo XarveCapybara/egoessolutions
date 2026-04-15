@@ -338,12 +338,7 @@ foreach ($employees as $e) {
   <body class="eg-payslip-body">
     <div class="eg-payslip-toolbar d-flex flex-wrap align-items-center gap-2">
       <a href="#" class="eg-toolbar-btn eg-toolbar-btn--primary" onclick="window.print(); return false;">Print</a>
-      <a class="eg-toolbar-btn eg-toolbar-btn--secondary" href="payroll.php?<?= htmlspecialchars(http_build_query([
-          'period' => $period,
-          'week' => $weekStartStr,
-          'month' => $monthPicked->format('Y-m'),
-          'office_id' => $officeFilter,
-      ]), ENT_QUOTES, 'UTF-8') ?>">Back to payroll</a>
+
       <label style="font-family: Arial, sans-serif; font-size: 13px; margin-left: 8px;">
         <input type="checkbox" id="dsShowDeductions" checked />
         Show deductions on summary

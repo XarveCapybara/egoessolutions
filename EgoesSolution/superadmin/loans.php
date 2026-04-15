@@ -8,42 +8,36 @@ $name = $_SESSION['display_name'] ?? 'Super Admin';
 
 require_once __DIR__ . '/../config/database.php';
 
-function eg_ensure_cash_advances(PDO $pdo): void
-{
-    $pdo->exec('
-        CREATE TABLE IF NOT EXISTS cash_advances (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            employee_id INT NOT NULL,
-            amount DECIMAL(12,2) NOT NULL,
-            notes VARCHAR(255) NULL,
-            advance_date DATE NOT NULL,
-            status VARCHAR(20) NOT NULL DEFAULT "pending",
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            INDEX idx_cash_adv_employee (employee_id),
-            INDEX idx_cash_adv_status_date (status, advance_date)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    ');
+// Ensure cash_advances table exists and clean up legacy columns (once per session)
+if (empty($_SESSION['_eg_cash_advances_migrated'])) {
     try {
-        if ($pdo->query("SHOW COLUMNS FROM cash_advances LIKE 'deducted_period_type'")->rowCount() > 0) {
-            $pdo->exec('ALTER TABLE cash_advances DROP COLUMN deducted_period_type');
+        $pdo->exec('
+            CREATE TABLE IF NOT EXISTS cash_advances (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                employee_id INT NOT NULL,
+                amount DECIMAL(12,2) NOT NULL,
+                notes VARCHAR(255) NULL,
+                advance_date DATE NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT "pending",
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_cash_adv_employee (employee_id),
+                INDEX idx_cash_adv_status_date (status, advance_date)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ');
+        // Drop legacy columns if they exist
+        foreach (['deducted_period_type', 'deducted_period_start', 'deducted_period_end'] as $legacyCol) {
+            if ($pdo->query("SHOW COLUMNS FROM cash_advances LIKE '{$legacyCol}'")->rowCount() > 0) {
+                $pdo->exec("ALTER TABLE cash_advances DROP COLUMN {$legacyCol}");
+            }
         }
-        if ($pdo->query("SHOW COLUMNS FROM cash_advances LIKE 'deducted_period_start'")->rowCount() > 0) {
-            $pdo->exec('ALTER TABLE cash_advances DROP COLUMN deducted_period_start');
-        }
-        if ($pdo->query("SHOW COLUMNS FROM cash_advances LIKE 'deducted_period_end'")->rowCount() > 0) {
-            $pdo->exec('ALTER TABLE cash_advances DROP COLUMN deducted_period_end');
-        }
+        // One-time status cleanup
+        $pdo->exec("UPDATE cash_advances SET status = 'pending' WHERE status = 'accredited'");
     } catch (Throwable $e) {
-        // ignore legacy cleanup issues
+        // ignore migration issues
     }
+    $_SESSION['_eg_cash_advances_migrated'] = true;
 }
 
-eg_ensure_cash_advances($pdo);
-try {
-    $pdo->exec("UPDATE cash_advances SET status = 'pending' WHERE status = 'accredited'");
-} catch (Throwable $e) {
-    // ignore status cleanup issues
-}
 
 $flashType = $_SESSION['loans_flash_type'] ?? null;
 $flashMsg = $_SESSION['loans_flash_msg'] ?? null;
@@ -99,6 +93,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         VALUES (?, ?, ?, CURDATE(), "pending")
     ');
     $ins->execute([$employeeId, $amount, $notes !== '' ? $notes : null]);
+
     $_SESSION['loans_flash_type'] = 'success';
     $_SESSION['loans_flash_msg'] = 'Cash advance added. It will be auto-deducted in the payroll week of the advance date.';
     header('Location: loans.php');
@@ -106,7 +101,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 }
 
 $employees = $pdo->query('
-    SELECT e.id AS employee_id, e.employee_code, u.full_name, o.name AS office_name
+    SELECT 
+      e.id AS employee_id, 
+      CONCAT(u.full_name, " (", COALESCE(e.employee_code, "N/A"), ") — ", COALESCE(o.name, "Unassigned")) AS display_name,
+      LOWER(CONCAT(u.full_name, " (", COALESCE(e.employee_code, "N/A"), ") — ", COALESCE(o.name, "Unassigned"))) AS search_name
     FROM employees e
     JOIN users u ON u.id = e.user_id
     LEFT JOIN offices o ON o.id = u.office_id
@@ -137,6 +135,7 @@ $cashAdvances = $pdo->query('
       END,
       ca.advance_date DESC,
       ca.id DESC
+    LIMIT 200
 ')->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
@@ -190,39 +189,32 @@ $cashAdvances = $pdo->query('
           <form method="post" class="eg-panel p-3 mb-4">
             <h5 class="mb-3">Add Cash Advance</h5>
             <div class="row g-3">
-              <div class="col-md-5">
+              <div class="col-12 col-md-5">
                 <label class="form-label" for="employee_id">Employee</label>
-                <select class="form-select" id="employee_id" name="employee_id" required>
+                <select class="form-select text-truncate" id="employee_id" name="employee_id" required style="max-width: 100%;">
                   <option value="">Select employee...</option>
                   <?php foreach ($employees as $emp): ?>
-                    <?php
-                      $employeeDisplay = (string) $emp['full_name']
-                        . ' (' . (string) ($emp['employee_code'] ?? 'N/A') . ') — '
-                        . (string) ($emp['office_name'] ?? 'Unassigned');
-                      $employeeSearch = function_exists('mb_strtolower')
-                        ? mb_strtolower($employeeDisplay, 'UTF-8')
-                        : strtolower($employeeDisplay);
-                    ?>
                     <option
                       value="<?= (int) $emp['employee_id'] ?>"
-                      data-search="<?= htmlspecialchars($employeeSearch, ENT_QUOTES, 'UTF-8') ?>"
+                      data-search="<?= htmlspecialchars($emp['search_name'], ENT_QUOTES, 'UTF-8') ?>"
                     >
-                      <?= htmlspecialchars($employeeDisplay) ?>
+                      <?= htmlspecialchars($emp['display_name']) ?>
                     </option>
                   <?php endforeach; ?>
                 </select>
               </div>
-              <div class="col-md-2">
+
+              <div class="col-12 col-md-3">
                 <label class="form-label" for="amount">Amount</label>
                 <input class="form-control" id="amount" name="amount" type="number" min="0.01" step="0.01" placeholder="0.00" required />
+                <div class="form-text d-none d-md-block" style="font-size:0.75rem;">Date set when approved.</div>
               </div>
-              <div class="col-md-2">
-                <label class="form-label">&nbsp;</label>
-                <div class="form-text mt-2">Date is set automatically when approved.</div>
-              </div>
-              <div class="col-md-3">
+              <div class="col-12 col-md-4">
                 <label class="form-label" for="notes">Notes (optional)</label>
                 <input class="form-control" id="notes" name="notes" type="text" maxlength="255" placeholder="Cash advance note..." />
+              </div>
+              <div class="col-12 d-md-none text-muted" style="font-size:0.8rem;">
+                Date is set automatically when approved.
               </div>
             </div>
             <div class="mt-3">
@@ -381,6 +373,7 @@ $cashAdvances = $pdo->query('
         });
       })();
     </script>
+    <?php include __DIR__ . '/../includes/footer.php'; ?>
   </body>
 </html>
 

@@ -7,14 +7,44 @@ if (($_SESSION['role'] ?? '') !== 'admin') {
 
 require_once __DIR__ . '/../config/database.php';
 
-$fullName = $_SESSION['display_name'] ?? 'Admin';
-$parts = explode(' ', $fullName, 2);
 $userId = (int) ($_SESSION['user_id'] ?? 0);
 
+// Fetch row from users table and directly extract official first/last names
+$dbUser = null;
+if ($userId > 0) {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT
+                full_name,
+                profile_image,
+                CASE
+                    WHEN LOCATE(',', full_name) > 0 THEN TRIM(SUBSTRING_INDEX(full_name, ',', -1))
+                    ELSE TRIM(SUBSTRING_INDEX(full_name, ' ', 1))
+                END AS official_first_name,
+                CASE
+                    WHEN LOCATE(',', full_name) > 0 THEN TRIM(SUBSTRING_INDEX(full_name, ',', 1))
+                    WHEN LOCATE(' ', full_name) > 0 THEN TRIM(SUBSTRING(full_name, LOCATE(' ', full_name) + 1))
+                    ELSE ''
+                END AS official_last_name
+            FROM users
+            WHERE id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$userId]);
+        $dbUser = $stmt->fetch();
+    } catch (PDOException $e) {}
+}
+
+$officialFullName = trim((string) ($dbUser['full_name'] ?? ''));
+$firstNamePart = trim((string) ($dbUser['official_first_name'] ?? ''));
+$lastNamePart = trim((string) ($dbUser['official_last_name'] ?? ''));
+if ($firstNamePart === '') {
+    $firstNamePart = 'Admin';
+}
 $defaults = [
     'nickname' => '',
-    'first_name' => $parts[0] ?? 'Admin',
-    'last_name' => $parts[1] ?? '',
+    'first_name' => $firstNamePart,
+    'last_name' => $lastNamePart,
     'avatar' => '',
     'date_of_birth' => '',
     'gender' => '',
@@ -66,6 +96,14 @@ if ($userId > 0) {
                 if (array_key_exists($k, $dbProfile) && $dbProfile[$k] !== null) {
                     $p[$k] = (string) $dbProfile[$k];
                 }
+            }
+            // Normalize legacy malformed rows (e.g. first_name containing full name).
+            if (
+                trim((string) ($p['first_name'] ?? '')) === '' ||
+                (trim((string) ($p['last_name'] ?? '')) === '' && trim((string) ($p['first_name'] ?? '')) === $officialFullName)
+            ) {
+                $p['first_name'] = $firstNamePart;
+                $p['last_name'] = $lastNamePart;
             }
         }
     } catch (PDOException $e) {
@@ -160,6 +198,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $p['phone'] !== '' ? $p['phone'] : null,
                     $p['email'] !== '' ? $p['email'] : null,
                 ]);
+                
+                // Sync with users table full_name (Lastname, Firstname format)
+                $newFormattedFullName = $p['last_name'] !== '' ? $p['last_name'] . ', ' . $p['first_name'] : $p['first_name'];
+                $updateUserFullNameStmt = $pdo->prepare('UPDATE users SET full_name = ? WHERE id = ?');
+                $updateUserFullNameStmt->execute([$newFormattedFullName, $userId]);
+
                 if ($profileImagePath !== '' && $userId > 0) {
                     $updateImageStmt = $pdo->prepare('UPDATE users SET profile_image = ? WHERE id = ?');
                     $updateImageStmt->execute([$profileImagePath, $userId]);
@@ -172,7 +216,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         if ($error === null) {
-            $_SESSION['display_name'] = $p['nickname'] !== '' ? $p['nickname'] : (trim($firstName . ' ' . $lastName) ?: $firstName);
+            $finalDisplayName = $p['last_name'] !== '' ? $p['last_name'] . ', ' . $p['first_name'] : $p['first_name'];
+            $_SESSION['display_name'] = $p['nickname'] !== '' ? $p['nickname'] : $finalDisplayName;
             header('Location: profile.php?saved=1');
             exit;
         }
@@ -193,17 +238,20 @@ if ($userId > 0) {
     $employeeCodeStmt->execute([$userId]);
     $employeeCode = (string) ($employeeCodeStmt->fetchColumn() ?: '');
 
-    $profileImageStmt = $pdo->prepare('SELECT profile_image FROM users WHERE id = ? LIMIT 1');
-    $profileImageStmt->execute([$userId]);
-    $profileImage = trim((string) ($profileImageStmt->fetchColumn() ?: ''));
-    if ($profileImage !== '') {
-        $avatarUrl = $profileImage;
+    if ($dbUser && isset($dbUser['profile_image'])) {
+        $profileImage = trim((string) $dbUser['profile_image']);
+        if ($profileImage !== '') {
+            $avatarUrl = $profileImage;
+        }
     }
 }
 
-$showName = $profile['nickname'] !== '' ? $profile['nickname'] : $profile['last_name'];
-$fullDisplayName = trim(($profile['first_name'] . ' ' . ($profile['last_name'] ?? '')));
-if ($fullDisplayName === '') {
+$showName = $profile['nickname'] !== '' ? $profile['nickname'] : trim($profile['first_name'] . ' ' . $profile['last_name']);
+if ($showName === '') {
+    $showName = 'Admin';
+}
+$fullDisplayName = $profile['last_name'] !== '' ? $profile['last_name'] . ', ' . $profile['first_name'] : $profile['first_name'];
+if (trim($fullDisplayName) === '') {
     $fullDisplayName = '—';
 }
 
@@ -264,11 +312,18 @@ function eg_admin_disp(?string $s): string
         <div class="eg-profile-ref-card" id="edit-profile">
           <div class="eg-profile-ref-cardhead">
             <div class="eg-profile-ref-hero">
-              <div class="eg-profile-ref-avatar">
+              <div class="eg-profile-ref-avatar position-relative" style="overflow: hidden;">
                 <?php if ($avatarUrl): ?>
-                  <img src="<?= htmlspecialchars($avatarUrl) ?>" alt="" />
+                  <img id="avatarPreview" src="<?= htmlspecialchars($avatarUrl) ?>" alt="" style="object-fit: cover; width: 100%; height: 100%;" />
                 <?php else: ?>
-                  <span class="bi bi-person-fill"></span>
+                  <span class="bi bi-person-fill" id="avatarIconFallback"></span>
+                  <img id="avatarPreview" src="" alt="" style="display: none; object-fit: cover; width: 100%; height: 100%;" />
+                <?php endif; ?>
+                
+                <?php if ($editMode): ?>
+                  <label for="profile_image" class="position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center m-0" style="background: rgba(0,0,0,0.5); cursor: pointer; opacity: 0; transition: opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0" title="Change Profile Picture">
+                    <i class="bi bi-camera text-white" style="font-size: 1.5rem;"></i>
+                  </label>
                 <?php endif; ?>
               </div>
               <div class="eg-profile-ref-intro">
@@ -293,22 +348,19 @@ function eg_admin_disp(?string $s): string
 
           <?php if ($editMode): ?>
             <form method="post" enctype="multipart/form-data" class="eg-profile-ref-form">
+              <input type="file" id="profile_image" name="profile_image" accept="image/jpeg,image/png,image/webp,image/gif" class="d-none" />
               <div class="eg-profile-ref-grid">
-                <div class="eg-profile-ref-field">
-                  <label class="eg-profile-ref-label" for="profile_image">Profile image</label>
-                  <input type="file" class="eg-profile-ref-input" id="profile_image" name="profile_image" accept="image/jpeg,image/png,image/webp,image/gif" />
-                </div>
                 <div class="eg-profile-ref-field">
                   <label class="eg-profile-ref-label" for="nickname">Nickname</label>
                   <input type="text" class="eg-profile-ref-input" id="nickname" name="nickname" value="<?= htmlspecialchars($profile['nickname']) ?>" placeholder="Display name" />
                 </div>
                 <div class="eg-profile-ref-field">
-                  <label class="eg-profile-ref-label" for="last_name">Last name</label>
-                  <input type="text" class="eg-profile-ref-input" id="last_name" name="last_name" value="<?= htmlspecialchars($profile['last_name'] ?? '') ?>" />
-                </div>
-                <div class="eg-profile-ref-field">
                   <label class="eg-profile-ref-label" for="first_name">First name</label>
                   <input type="text" class="eg-profile-ref-input" id="first_name" name="first_name" value="<?= htmlspecialchars($profile['first_name']) ?>" required />
+                </div>
+                <div class="eg-profile-ref-field">
+                  <label class="eg-profile-ref-label" for="last_name">Last name</label>
+                  <input type="text" class="eg-profile-ref-input" id="last_name" name="last_name" value="<?= htmlspecialchars($profile['last_name'] ?? '') ?>" />
                 </div>
                 <div class="eg-profile-ref-field">
                   <label class="eg-profile-ref-label" for="date_of_birth">Date of birth</label>
@@ -339,8 +391,12 @@ function eg_admin_disp(?string $s): string
           <?php else: ?>
             <dl class="eg-profile-ref-dl">
               <div class="eg-profile-ref-row">
-                <dt>Full name</dt>
-                <dd><?= htmlspecialchars($fullDisplayName) ?></dd>
+                <dt>First name</dt>
+                <dd><?= htmlspecialchars($profile['first_name'] !== '' ? $profile['first_name'] : '—') ?></dd>
+              </div>
+              <div class="eg-profile-ref-row">
+                <dt>Last name</dt>
+                <dd><?= htmlspecialchars($profile['last_name'] !== '' ? $profile['last_name'] : '—') ?></dd>
               </div>
               <div class="eg-profile-ref-row">
                 <dt>Date of Birth</dt>
@@ -493,5 +549,26 @@ function eg_admin_disp(?string $s): string
         })();
       </script>
     <?php endif; ?>
+    <?php include __DIR__ . '/../includes/footer.php'; ?>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        const fileInput = document.getElementById('profile_image');
+        const preview = document.getElementById('avatarPreview');
+        const fallback = document.getElementById('avatarIconFallback');
+        if (fileInput && preview) {
+          fileInput.addEventListener('change', function () {
+            if (this.files && this.files[0]) {
+              const reader = new FileReader();
+              reader.onload = function (e) {
+                preview.src = e.target.result;
+                preview.style.display = 'block';
+                if (fallback) fallback.style.display = 'none';
+              };
+              reader.readAsDataURL(this.files[0]);
+            }
+          });
+        }
+      });
+    </script>
   </body>
 </html>

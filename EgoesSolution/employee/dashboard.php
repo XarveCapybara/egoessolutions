@@ -306,10 +306,7 @@ $attendanceDetailsJson = json_encode(
     </style>
   </head>
   <body class="bg-light">
-    <?php
-    $name = $_SESSION['display_name'] ?? 'Employee';
-    include __DIR__ . '/includes/header.php';
-    ?>
+    <?php include __DIR__ . '/../includes/header.php'; ?>
 
     <div class="container-fluid py-4">
       <nav class="eg-employee-nav mb-4">

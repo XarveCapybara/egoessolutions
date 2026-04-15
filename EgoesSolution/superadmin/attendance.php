@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 if (($_SESSION['role'] ?? '') !== 'superadmin') {
     header('Location: ../auth/login.php');
@@ -201,6 +201,7 @@ if ($officeChoiceMade && $pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowC
         </main>
       </div>
     </div>
+    <?php include __DIR__ . '/../includes/footer.php'; ?>
   </body>
 </html>
 

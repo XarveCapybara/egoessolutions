@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 if (($_SESSION['role'] ?? '') !== 'admin') {
     header('Location: ../auth/login.php');
@@ -328,6 +328,7 @@ if ($officeId > 0) {
         }
       });
     </script>
+    <?php include __DIR__ . '/../includes/footer.php'; ?>
   </body>
 </html>
 

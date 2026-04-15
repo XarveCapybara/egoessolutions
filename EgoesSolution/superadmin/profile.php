@@ -8,10 +8,32 @@ if (($_SESSION['role'] ?? '') !== 'superadmin') {
 require_once __DIR__ . '/../config/database.php';
 
 $userId = (int) ($_SESSION['user_id'] ?? 0);
-$name = $_SESSION['display_name'] ?? 'Super Admin';
 $email = $_SESSION['user_email'] ?? '';
 $message = null;
 $error = null;
+
+// Fetch official full_name from users table
+$officialFullName = 'Super Admin';
+if ($userId > 0) {
+    try {
+        $stmt = $pdo->prepare('SELECT full_name FROM users WHERE id = ? LIMIT 1');
+        $stmt->execute([$userId]);
+        $officialFullName = (string) ($stmt->fetchColumn() ?: 'Super Admin');
+    } catch (PDOException $e) {}
+}
+
+// Parse name parts: handle "Lastname, Firstname" format
+$parts = explode(',', $officialFullName, 2);
+if (count($parts) > 1) {
+    // Comma format: Lastname, Firstname
+    $lastName = trim($parts[0]);
+    $firstName = trim($parts[1]);
+} else {
+    // Space format: Firstname Lastname
+    $parts = explode(' ', $officialFullName, 2);
+    $firstName = trim($parts[0]);
+    $lastName = trim($parts[1] ?? '');
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $currentPassword = trim($_POST['current_password'] ?? '');
@@ -85,8 +107,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <h5 class="mb-3">Account Information</h5>
             <div class="row g-3">
               <div class="col-md-6">
-                <div class="text-muted small">Display Name</div>
-                <div class="fw-semibold"><?= htmlspecialchars($name) ?></div>
+                <div class="text-muted small">First Name</div>
+                <div class="fw-semibold"><?= htmlspecialchars($firstName) ?></div>
+              </div>
+              <div class="col-md-6">
+                <div class="text-muted small">Last Name</div>
+                <div class="fw-semibold"><?= htmlspecialchars($lastName) ?></div>
               </div>
               <div class="col-md-6">
                 <div class="text-muted small">Email</div>
@@ -128,5 +154,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
       crossorigin="anonymous"
     ></script>
+    <?php include __DIR__ . '/../includes/footer.php'; ?>
   </body>
 </html>

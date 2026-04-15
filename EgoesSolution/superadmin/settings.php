@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 if (($_SESSION['role'] ?? '') !== 'superadmin') {
     header('Location: ../auth/login.php');
@@ -490,5 +490,6 @@ ALTER TABLE employees ADD COLUMN rate_type VARCHAR(32) NULL DEFAULT NULL;</pre>
         })();
       </script>
     <?php endif; ?>
+    <?php include __DIR__ . '/../includes/footer.php'; ?>
   </body>
 </html>

@@ -13,7 +13,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
 
 require_once __DIR__ . '/../config/database.php';
 
-$fullName = trim($_POST['full_name'] ?? '');
+$firstName = trim($_POST['first_name'] ?? '');
+$lastName = trim($_POST['last_name'] ?? '');
+$fullName = ($lastName !== '') ? $lastName . ', ' . $firstName : $firstName;
 $email = strtolower(trim($_POST['email'] ?? ''));
 $password = trim($_POST['password'] ?? '');
 $officeId = (int) ($_POST['office_id'] ?? 0);
@@ -22,9 +24,9 @@ if ($officeId > 0) {
     $redirectUrl .= '?office_id=' . $officeId;
 }
 
-if ($fullName === '' || $email === '' || $password === '') {
+if ($firstName === '' || $lastName === '' || $email === '' || $password === '') {
     $_SESSION['employee_create_status'] = 'error';
-    $_SESSION['employee_create_message'] = 'Please fill out all fields.';
+    $_SESSION['employee_create_message'] = 'Please fill out all fields including First and Last names.';
     header('Location: ' . $redirectUrl);
     exit;
 }
@@ -73,13 +75,15 @@ try {
     $insertUserStmt->execute([$officeId, $fullName, $email, $passwordHash]);
     $userId = (int) $pdo->lastInsertId();
 
-    // Keep employee master table in sync if available.
-    $hasEmployeesTable = $pdo->query("SHOW TABLES LIKE 'employees'")->rowCount() > 0;
-    if ($hasEmployeesTable) {
-        $employeeCode = 'EMP' . str_pad((string) $userId, 6, '0', STR_PAD_LEFT);
-        $insertEmployeeStmt = $pdo->prepare('INSERT INTO employees (user_id, employee_code) VALUES (?, ?)');
-        $insertEmployeeStmt->execute([$userId, $employeeCode]);
-    }
+    // Also create/update user_profiles entry
+    $upsertProfileStmt = $pdo->prepare('
+        INSERT INTO user_profiles (user_id, first_name, last_name)
+        VALUES (?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            first_name = VALUES(first_name),
+            last_name = VALUES(last_name)
+    ');
+    $upsertProfileStmt->execute([$userId, $firstName, $lastName]);
 
     $pdo->commit();
 

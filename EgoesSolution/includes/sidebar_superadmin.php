@@ -1,9 +1,12 @@
 <?php
 $currentPage = basename($_SERVER['PHP_SELF'] ?? '');
 ?>
-<aside class="col-12 col-md-3 col-lg-2 eg-sidebar eg-sidebar-superadmin py-4">
-  <div class="eg-sidebar-brand px-3 mb-3">
+<aside id="eg-sidebar" class="col-12 col-md-3 col-lg-2 eg-sidebar eg-sidebar-superadmin py-4">
+  <div class="eg-sidebar-brand d-flex align-items-center justify-content-between px-3 mb-3">
     <span class="eg-sidebar-role">Superadmin</span>
+    <button id="eg-sidebar-toggle" class="eg-sidebar-toggle-btn eg-sidebar-toggle-btn-dark" aria-label="Toggle sidebar" title="Toggle sidebar">
+      <span class="bi bi-layout-sidebar"></span>
+    </button>
   </div>
   <nav class="nav flex-column gap-1">
     <a href="dashboard.php" class="eg-sidebar-link <?= $currentPage === 'dashboard.php' ? 'active' : '' ?>">
