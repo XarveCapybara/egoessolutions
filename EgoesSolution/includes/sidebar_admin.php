@@ -25,7 +25,15 @@ $currentPage = basename($_SERVER['PHP_SELF'] ?? '');
       <i class="bi bi-people"></i>
       <span>Employees</span>
     </a>
-    <a href="../auth/logout.php" class="eg-sidebar-link eg-sidebar-link-danger mt-3">
+    <a href="leave_requests.php" class="eg-sidebar-link <?= $currentPage === 'leave_requests.php' ? 'active' : '' ?>">
+      <i class="bi bi-calendar-check"></i>
+      <span>Leave Requests</span>
+    </a>
+    <a href="memorandum.php" class="eg-sidebar-link <?= $currentPage === 'memorandum.php' ? 'active' : '' ?>">
+      <i class="bi bi-file-earmark-text"></i>
+      <span>Memorandum</span>
+    </a>
+    <a href="../auth/logout.php" class="eg-sidebar-link eg-sidebar-link-danger">
       <i class="bi bi-box-arrow-right"></i>
       <span>Logout</span>
     </a>

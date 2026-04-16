@@ -14,6 +14,23 @@ function eg_payroll_monday(DateTimeImmutable $d): DateTimeImmutable
     return $d->modify('-' . ($w - 1) . ' days')->setTime(0, 0, 0);
 }
 
+function eg_cash_advance_week_range(string $advanceDate): ?array
+{
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $advanceDate)) {
+        return null;
+    }
+    $d = DateTimeImmutable::createFromFormat('Y-m-d', $advanceDate);
+    if (!$d) {
+        return null;
+    }
+    $weekStart = eg_payroll_monday($d->setTime(0, 0, 0));
+    $weekEnd = $weekStart->modify('+4 days');
+    return [
+        'start' => $weekStart->format('Y-m-d'),
+        'end' => $weekEnd->format('Y-m-d'),
+    ];
+}
+
 $period = trim((string) ($_GET['period'] ?? 'week'));
 if ($period !== 'month') {
     $period = 'week';
@@ -26,9 +43,9 @@ if ($weekInput !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $weekInput)) {
     $picked = new DateTimeImmutable('today');
 }
 $weekMonday = eg_payroll_monday($picked);
-$weekSunday = $weekMonday->modify('+6 days');
+$weekFriday = $weekMonday->modify('+4 days');
 $weekStartStr = $weekMonday->format('Y-m-d');
-$weekEndStr = $weekSunday->format('Y-m-d');
+$weekEndStr = $weekFriday->format('Y-m-d');
 
 $monthInput = trim((string) ($_GET['month'] ?? ''));
 if ($monthInput !== '' && preg_match('/^\d{4}-\d{2}$/', $monthInput)) {
@@ -47,7 +64,7 @@ if ($period === 'month') {
 } else {
     $rangeStart = $weekStartStr;
     $rangeEnd = $weekEndStr;
-    $periodLabel = $weekMonday->format('M j') . ' - ' . $weekSunday->format('M j, Y');
+    $periodLabel = $weekMonday->format('M j') . ' - ' . $weekFriday->format('M j, Y');
 }
 
 $officeFilter = (int) ($_GET['office_id'] ?? 0);
@@ -62,6 +79,8 @@ foreach ($offices as $o) {
 
 $hasEmployeesTable = $pdo->query("SHOW TABLES LIKE 'employees'")->rowCount() > 0;
 $hasAttendanceLogs = $pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount() > 0;
+$hasOfficeTimeInColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_in'")->rowCount() > 0;
+$hasOfficeTimeOutColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_out'")->rowCount() > 0;
 $hasRateAmountColumn = $hasEmployeesTable && $pdo->query("SHOW COLUMNS FROM employees LIKE 'rate_amount'")->rowCount() > 0;
 $hasPositionColumn = $hasEmployeesTable && $pdo->query("SHOW COLUMNS FROM employees LIKE 'position'")->rowCount() > 0;
 $hasEmpCodeColumn = $hasEmployeesTable && $pdo->query("SHOW COLUMNS FROM employees LIKE 'employee_code'")->rowCount() > 0;
@@ -117,14 +136,19 @@ if ($hasEmployeesTable && $hasAttendanceLogs) {
     $codeSelect = $hasEmpCodeColumn ? 'e.employee_code' : 'CAST(e.id AS CHAR) AS employee_code';
     $lateSelect = $hasLateMinutesColumn ? 'al.late_minutes' : '0 AS late_minutes';
     $dedSelect = $hasDeductionAmountColumn ? 'al.deduction_amount' : '0.00 AS deduction_amount';
+    $officeTimeInSelect = $hasOfficeTimeInColumn ? 'o.time_in AS office_start' : 'NULL AS office_start';
+    $officeTimeOutSelect = $hasOfficeTimeOutColumn ? 'o.time_out AS office_end' : 'NULL AS office_end';
 
     $sql = "
         SELECT
             al.employee_id,
+            al.log_date,
             {$lateSelect},
             {$dedSelect},
             al.time_in,
             al.time_out,
+            {$officeTimeInSelect},
+            {$officeTimeOutSelect},
             u.full_name,
             u.role,
             {$positionSelect},
@@ -133,6 +157,7 @@ if ($hasEmployeesTable && $hasAttendanceLogs) {
         FROM attendance_logs al
         JOIN employees e ON e.id = al.employee_id
         JOIN users u ON u.id = e.user_id
+        JOIN offices o ON o.id = al.office_id
         WHERE al.log_date BETWEEN ? AND ?
     ";
     $params = [$rangeStart, $rangeEnd];
@@ -169,20 +194,73 @@ if ($hasEmployeesTable && $hasAttendanceLogs) {
         }
         $wm = 0;
         if (!empty($row['time_in']) && !empty($row['time_out'])) {
-            $inTs = strtotime((string) $row['time_in']);
-            $outTs = strtotime((string) $row['time_out']);
-            if ($outTs > $inTs) {
-                $wm = (int) floor(($outTs - $inTs) / 60);
+            $actualInTs = strtotime((string) $row['time_in']);
+            $actualOutTs = strtotime((string) $row['time_out']);
+            $ld = (string) ($row['log_date'] ?? '');
+            $officeStart = (string) ($row['office_start'] ?? '08:00:00');
+            $officeEnd = (string) ($row['office_end'] ?? '17:00:00');
+            $isGraveyard = substr($officeStart, 0, 5) > substr($officeEnd, 0, 5);
+            $schedInTs = strtotime($ld . ' ' . $officeStart);
+            $schedOutTs = strtotime($ld . ' ' . $officeEnd);
+            if ($isGraveyard) {
+                $schedOutTs = strtotime('+1 day', $schedOutTs);
+            }
+            $effectiveInTs = $schedInTs;
+            $effectiveOutTs = min($actualOutTs, $schedOutTs);
+            if ($effectiveOutTs > $effectiveInTs) {
+                $rawWm = (int) floor(($effectiveOutTs - $effectiveInTs) / 60);
+                $wm = (int) floor($rawWm / 60) * 60;
             }
         }
         $byEmployee[$eid]['worked_minutes'] += $wm;
 
         $d = (float) ($row['deduction_amount'] ?? 0);
         $late = (int) ($row['late_minutes'] ?? 0);
-        if ($d <= 0 && $deductionPerMinute > 0) {
-            $d = max(0, $late - 60) * $deductionPerMinute;
+        if ($d <= 0 && $deductionPerMinute > 0 && $hasLateMinutesColumn) {
+            $d = max(0, $late) * $deductionPerMinute;
         }
         $byEmployee[$eid]['late_deduction'] += $d;
+    }
+
+    // Include deducted cash advances for this period (same rule as payroll page).
+    if ($pdo->query("SHOW TABLES LIKE 'cash_advances'")->rowCount() > 0 && !empty($byEmployee)) {
+        $employeeIds = array_values(array_unique(array_map('intval', array_keys($byEmployee))));
+        $ph = implode(',', array_fill(0, count($employeeIds), '?'));
+        $loanStmt = $pdo->prepare("
+            SELECT employee_id, amount, advance_date, status
+            FROM cash_advances
+            WHERE employee_id IN ({$ph})
+            ORDER BY advance_date, id
+        ");
+        $loanStmt->execute($employeeIds);
+        $loanRows = $loanStmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($loanRows as $lr) {
+            $eid = (int) ($lr['employee_id'] ?? 0);
+            if (!isset($byEmployee[$eid])) {
+                continue;
+            }
+            if ((string) ($lr['status'] ?? '') !== 'deducted') {
+                continue;
+            }
+            $isDueThisPeriod = false;
+            if ($period === 'week') {
+                $targetWeek = eg_cash_advance_week_range((string) ($lr['advance_date'] ?? ''));
+                $isDueThisPeriod = $targetWeek
+                    && $targetWeek['start'] === $rangeStart
+                    && $targetWeek['end'] === $rangeEnd;
+            } else {
+                $ad = (string) ($lr['advance_date'] ?? '');
+                $isDueThisPeriod = $ad !== '' && $ad >= $rangeStart && $ad <= $rangeEnd;
+            }
+            if (!$isDueThisPeriod) {
+                continue;
+            }
+            $amt = (float) ($lr['amount'] ?? 0);
+            if ($amt <= 0) {
+                continue;
+            }
+            $byEmployee[$eid]['late_deduction'] += $amt;
+        }
     }
 
     foreach ($byEmployee as $eid => $r) {

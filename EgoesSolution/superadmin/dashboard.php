@@ -18,13 +18,63 @@ $hasEmployeesTable = $pdo->query("SHOW TABLES LIKE 'employees'")->rowCount() > 0
 $hasAppSettingsTable = $pdo->query("SHOW TABLES LIKE 'app_settings'")->rowCount() > 0;
 $hasCashAdvancesTable = $pdo->query("SHOW TABLES LIKE 'cash_advances'")->rowCount() > 0;
 
-// Attendance today
+// Attendance today (per-office effective workday, same rules as admin dashboard — graveyard shifts use previous calendar date before shift end time)
 $totalAttendanceToday = 0;
 $presentToday = 0;
 $absentToday = 0;
 if ($hasAttendanceLogs) {
-    $totalAttendanceToday = (int) $pdo->query("SELECT COUNT(*) FROM attendance_logs WHERE DATE(log_date) = CURDATE()")->fetchColumn();
-    $presentToday = (int) $pdo->query("SELECT COUNT(DISTINCT employee_id) FROM attendance_logs WHERE DATE(log_date) = CURDATE()")->fetchColumn();
+    $hasOfficeTimeIn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_in'")->rowCount() > 0;
+    $hasOfficeTimeOut = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_out'")->rowCount() > 0;
+    $calendarToday = (new DateTimeImmutable('today'))->format('Y-m-d');
+    $nowTime = (new DateTimeImmutable('now'))->format('H:i:s');
+
+    $presentStmt = $pdo->prepare('
+        SELECT COUNT(DISTINCT employee_id)
+        FROM attendance_logs
+        WHERE office_id = ? AND log_date = ? AND time_in IS NOT NULL
+    ');
+    $logsStmt = $pdo->prepare('
+        SELECT COUNT(*)
+        FROM attendance_logs
+        WHERE office_id = ? AND log_date = ?
+    ');
+
+    if ($hasOfficeTimeIn && $hasOfficeTimeOut) {
+        $officeRows = $pdo->query('SELECT id, time_in, time_out FROM offices')->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($officeRows as $oRow) {
+            $officeIdRow = (int) ($oRow['id'] ?? 0);
+            if ($officeIdRow <= 0) {
+                continue;
+            }
+            $effectiveDate = $calendarToday;
+            $tin = $oRow['time_in'] ?? null;
+            $tout = $oRow['time_out'] ?? null;
+            if (!empty($tin) && !empty($tout)) {
+                $officeTimeInOnly = substr((string) $tin, 0, 8);
+                $officeTimeOutOnly = substr((string) $tout, 0, 8);
+                $isGraveyardShift = $officeTimeInOnly > $officeTimeOutOnly;
+                if ($isGraveyardShift && $nowTime <= $officeTimeOutOnly) {
+                    $effectiveDate = (new DateTimeImmutable('today'))->modify('-1 day')->format('Y-m-d');
+                }
+            }
+            $presentStmt->execute([$officeIdRow, $effectiveDate]);
+            $presentToday += (int) $presentStmt->fetchColumn();
+            $logsStmt->execute([$officeIdRow, $effectiveDate]);
+            $totalAttendanceToday += (int) $logsStmt->fetchColumn();
+        }
+    } else {
+        $fallbackPresent = $pdo->prepare('
+            SELECT COUNT(DISTINCT employee_id)
+            FROM attendance_logs
+            WHERE log_date = ? AND time_in IS NOT NULL
+        ');
+        $fallbackPresent->execute([$calendarToday]);
+        $presentToday = (int) $fallbackPresent->fetchColumn();
+        $fallbackLogs = $pdo->prepare('SELECT COUNT(*) FROM attendance_logs WHERE log_date = ?');
+        $fallbackLogs->execute([$calendarToday]);
+        $totalAttendanceToday = (int) $fallbackLogs->fetchColumn();
+    }
+
     $absentToday = max(0, $totalEmployees - $presentToday);
 }
 

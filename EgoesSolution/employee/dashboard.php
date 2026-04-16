@@ -308,22 +308,10 @@ $attendanceDetailsJson = json_encode(
   <body class="bg-light">
     <?php include __DIR__ . '/../includes/header.php'; ?>
 
-    <div class="container-fluid py-4">
-      <nav class="eg-employee-nav mb-4">
-        <a href="dashboard.php" class="eg-employee-nav-link active">
-          <i class="bi bi-house-door"></i>
-          <span>Dashboard</span>
-        </a>
-        <a href="payslip.php" class="eg-employee-nav-link">
-          <i class="bi bi-receipt"></i>
-          <span>Payslip Archive</span>
-        </a>
-        <a href="../auth/logout.php" class="eg-employee-nav-link eg-employee-nav-link-danger">
-          <i class="bi bi-box-arrow-right"></i>
-          <span>Logout</span>
-        </a>
-      </nav>
-
+    <div class="container-fluid">
+      <div class="row">
+        <?php include __DIR__ . '/../includes/sidebar_employee.php'; ?>
+        <main class="col-12 col-md-9 col-lg-10 py-4">
       <div class="row g-3">
         <div class="col-lg-4">
           <div class="eg-panel">
@@ -409,6 +397,7 @@ $attendanceDetailsJson = json_encode(
             </div>
           </div>
         </div>
+      </div></main>
       </div>
     </div>
 
@@ -470,6 +459,7 @@ $attendanceDetailsJson = json_encode(
         });
       })();
     </script>
+    <?php include __DIR__ . '/../includes/footer.php'; ?>
   </body>
 </html>
 

@@ -137,6 +137,7 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
     $selectLateMinutes = $hasLateMinutesColumn ? 'al.late_minutes' : '0 AS late_minutes';
     $selectRate = $hasRateAmountColumn ? 'e.rate_amount' : 'NULL AS rate_amount';
 
+
     $sql = "
         SELECT
             al.employee_id,
@@ -147,6 +148,8 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
             {$selectLateMinutes},
             u.full_name,
             o.name AS office_name,
+            o.time_in AS office_start,
+            o.time_out AS office_end,
             {$selectRate}
         FROM attendance_logs al
         JOIN employees e ON al.employee_id = e.id
@@ -180,10 +183,29 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
         }
         $workedMinutes = 0;
         if (!empty($row['time_in']) && !empty($row['time_out'])) {
-            $inTs = strtotime((string) $row['time_in']);
-            $outTs = strtotime((string) $row['time_out']);
-            if ($outTs > $inTs) {
-                $workedMinutes = (int) floor(($outTs - $inTs) / 60);
+            $actualInTs = strtotime((string) $row['time_in']);
+            $actualOutTs = strtotime((string) $row['time_out']);
+            $ld = (string) ($row['log_date'] ?? '');
+
+            // Determine office schedule for this log
+            $officeStart = (string) ($row['office_start'] ?? '08:00:00');
+            $officeEnd = (string) ($row['office_end'] ?? '17:00:00');
+            $isGraveyard = substr($officeStart, 0, 5) > substr($officeEnd, 0, 5);
+
+            $schedInTs = strtotime($ld . ' ' . $officeStart);
+            $schedOutTs = strtotime($ld . ' ' . $officeEnd);
+            if ($isGraveyard) {
+                $schedOutTs = strtotime('+1 day', $schedOutTs);
+            }
+
+            // Pay counting starts at office_start
+            $effectiveInTs = $schedInTs;
+            $effectiveOutTs = min($actualOutTs, $schedOutTs);
+
+            if ($effectiveOutTs > $effectiveInTs) {
+                $rawWm = (int) floor(($effectiveOutTs - $effectiveInTs) / 60);
+                // Round down to the nearest full hour as per instruction
+                $workedMinutes = (int) floor($rawWm / 60) * 60;
             }
         }
         $byEmployee[$eid]['worked_minutes'] += $workedMinutes;
@@ -191,9 +213,12 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
         $rowDeduction = (float) ($row['deduction_amount'] ?? 0);
         $lateMinutes = (int) ($row['late_minutes'] ?? 0);
         if ($rowDeduction <= 0 && $deductionPerMinute > 0 && $hasLateMinutesColumn) {
-            $rowDeduction = max(0, $lateMinutes - 60) * $deductionPerMinute;
+            // Removed 60-minute grace period per "deduction per minute" instruction.
+            $rowDeduction = max(0, $lateMinutes) * $deductionPerMinute;
         }
         $byEmployee[$eid]['deductions'] += $rowDeduction;
+
+
 
         if (!isset($employeeDetailsMap[$eid])) {
             $employeeDetailsMap[$eid] = [];
@@ -455,6 +480,20 @@ $payslipEmployeeIdList = implode(',', array_map(function ($pr) {
                   Generate Department Summary
                 </button>
               </div>
+              <div class="col-12 col-md-6 col-lg-3 d-grid">
+                <button
+                  type="button"
+                  class="btn btn-outline-primary js-open-office-summary-modal"
+                  data-office-summary-url="payroll_office_summary.php?<?= htmlspecialchars(http_build_query([
+                      'period' => $period,
+                      'week' => $weekStartStr,
+                      'month' => $monthValueForInput,
+                      'office_id' => $officeFilter,
+                  ]), ENT_QUOTES, 'UTF-8') ?>"
+                >
+                  Generate Office List Summary
+                </button>
+              </div>
             </div>
             <p class="text-muted small mb-0 mt-2">
               Showing <strong><?= htmlspecialchars($periodSummaryLabel) ?></strong>
@@ -674,6 +713,21 @@ $payslipEmployeeIdList = implode(',', array_map(function ($pr) {
               </div>
             </div>
           </div>
+
+          <!-- Office List Summary iframe modal -->
+          <div class="modal" id="officeSummaryIframeModal" tabindex="-1" aria-labelledby="officeSummaryIframeModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-xl modal-dialog-centered" style="max-width: 960px;">
+              <div class="modal-content" style="height: 85vh;">
+                <div class="modal-header py-2">
+                  <h5 class="modal-title" id="officeSummaryIframeModalLabel">Office Payroll Summary</h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-0" style="overflow: hidden;">
+                  <iframe id="officeSummaryIframe" src="about:blank" style="width: 100%; height: 100%; border: none;"></iframe>
+                </div>
+              </div>
+            </div>
+          </div>
         </main>
       </div>
     </div>
@@ -790,6 +844,28 @@ $payslipEmployeeIdList = implode(',', array_map(function ($pr) {
           if (!btn) return;
           e.preventDefault();
           var url = btn.getAttribute('data-summary-url');
+          if (!url || url === '#') return;
+          iframe.src = url;
+          modal.show();
+        });
+
+        modalEl.addEventListener('hidden.bs.modal', function () {
+          iframe.src = 'about:blank';
+        });
+      })();
+
+      // Office Summary iframe modal logic
+      (function () {
+        var modalEl = document.getElementById('officeSummaryIframeModal');
+        var iframe = document.getElementById('officeSummaryIframe');
+        if (!modalEl || !iframe) return;
+        var modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+
+        document.addEventListener('click', function (e) {
+          var btn = e.target.closest('.js-open-office-summary-modal');
+          if (!btn) return;
+          e.preventDefault();
+          var url = btn.getAttribute('data-office-summary-url');
           if (!url || url === '#') return;
           iframe.src = url;
           modal.show();

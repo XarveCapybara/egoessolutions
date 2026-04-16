@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 session_start();
 if (($_SESSION['role'] ?? '') !== 'admin') {
     header('Location: ../auth/login.php');
@@ -68,8 +68,11 @@ if ($hasAttendanceLogs && $employeeId > 0 && $officeId > 0) {
             al.time_in,
             al.time_out,
             {$selectLateMinutes},
-            {$selectDeduction}
+            {$selectDeduction},
+            o.time_in AS office_start,
+            o.time_out AS office_end
         FROM attendance_logs al
+        JOIN offices o ON al.office_id = o.id
         WHERE al.employee_id = ? AND al.office_id = ? AND al.log_date BETWEEN ? AND ?
         ORDER BY al.log_date DESC, al.time_in DESC, al.id DESC
     ");
@@ -79,14 +82,41 @@ if ($hasAttendanceLogs && $employeeId > 0 && $officeId > 0) {
     foreach ($weekRows as $row) {
         $workedMinutes = 0;
         if (!empty($row['time_in']) && !empty($row['time_out'])) {
-            $inTs = strtotime((string) $row['time_in']);
-            $outTs = strtotime((string) $row['time_out']);
-            if ($outTs > $inTs) {
-                $workedMinutes = (int) floor(($outTs - $inTs) / 60);
+            $actualInTs = strtotime((string) $row['time_in']);
+            $actualOutTs = strtotime((string) $row['time_out']);
+            $ld = (string) $row['log_date'];
+
+            // Determine office schedule for this log
+            $officeStart = (string) ($row['office_start'] ?? '08:00:00');
+            $officeEnd = (string) ($row['office_end'] ?? '17:00:00');
+            $isGraveyard = substr($officeStart, 0, 5) > substr($officeEnd, 0, 5);
+
+            $schedInTs = strtotime($ld . ' ' . $officeStart);
+            $schedOutTs = strtotime($ld . ' ' . $officeEnd);
+            if ($isGraveyard) {
+                $schedOutTs = strtotime('+1 day', $schedOutTs);
+            }
+
+            // Pay counting starts at office_start
+            $effectiveInTs = $schedInTs;
+            $effectiveOutTs = min($actualOutTs, $schedOutTs);
+
+            if ($effectiveOutTs > $effectiveInTs) {
+                $rawWm = (int) floor(($effectiveOutTs - $effectiveInTs) / 60);
+                // Round down to the nearest full hour as per instruction
+                $workedMinutes = (int) floor($rawWm / 60) * 60;
             }
         }
         $rowGross = ($workedMinutes / 60) * $hourlyRate;
         $rowDeduction = (float) ($row['deduction_amount'] ?? 0);
+        $lateMinutes = (int) ($row['late_minutes'] ?? 0);
+
+        
+        // Ensure deduction reflects actual lateness if not pre-calculated
+        if ($rowDeduction <= 0 && $deductionPerMinute > 0 && $hasLateMinutesColumn) {
+            $rowDeduction = max(0, $lateMinutes) * $deductionPerMinute;
+        }
+
         $weeklyGross += $rowGross;
         $weeklyDeductions += $rowDeduction;
 
@@ -95,11 +125,12 @@ if ($hasAttendanceLogs && $employeeId > 0 && $officeId > 0) {
             'time_in' => $row['time_in'],
             'time_out' => $row['time_out'],
             'worked_minutes' => $workedMinutes,
-            'late_minutes' => (int) ($row['late_minutes'] ?? 0),
+            'late_minutes' => $lateMinutes,
             'deduction_amount' => $rowDeduction,
             'gross_amount' => $rowGross,
         ];
     }
+
 
     if (count($recentRows) > 10) {
         $recentRows = array_slice($recentRows, 0, 10);

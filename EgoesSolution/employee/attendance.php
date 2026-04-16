@@ -28,7 +28,11 @@ $name = $_SESSION['display_name'] ?? 'Employee';
   <body class="bg-light">
     <?php include __DIR__ . '/../includes/header.php'; ?>
 
-    <div class="container-fluid py-4">
+    <div class="container-fluid">
+      <div class="row">
+        <?php include __DIR__ . '/../includes/sidebar_employee.php'; ?>
+
+        <main class="col-12 col-md-9 col-lg-10 py-4">
       <h4 class="mb-3">Attendance History (Prototype)</h4>
       <div class="table-responsive bg-white rounded-3 shadow-sm p-3">
         <table class="table table-sm align-middle mb-0">
@@ -56,12 +60,15 @@ $name = $_SESSION['display_name'] ?? 'Employee';
           </tbody>
         </table>
       </div>
+        </main>
+      </div>
     </div>
     <script
       src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
       integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
       crossorigin="anonymous"
     ></script>
+    <?php include __DIR__ . '/../includes/footer.php'; ?>
   </body>
 </html>
 

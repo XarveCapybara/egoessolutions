@@ -203,6 +203,7 @@ if (!$hasAttendanceLogs || !$hasEmployeesTable) {
     $selectDeduction = $hasDeductionAmountColumn ? 'al.deduction_amount' : '0.00 AS deduction_amount';
     $selectLateMinutes = $hasLateMinutesColumn ? 'al.late_minutes' : '0 AS late_minutes';
 
+
     $sql = "
             SELECT
                 al.log_date,
@@ -210,7 +211,9 @@ if (!$hasAttendanceLogs || !$hasEmployeesTable) {
                 al.time_out,
                 {$selectDeduction},
                 {$selectLateMinutes},
-                o.name AS office_name
+                o.name AS office_name,
+                o.time_in AS office_start,
+                o.time_out AS office_end
             FROM attendance_logs al
             JOIN offices o ON al.office_id = o.id
             WHERE al.employee_id = ?
@@ -250,10 +253,28 @@ if (!$hasAttendanceLogs || !$hasEmployeesTable) {
         }
         $wm = 0;
         if (!empty($row['time_in']) && !empty($row['time_out'])) {
-          $inTs = strtotime((string) $row['time_in']);
-          $outTs = strtotime((string) $row['time_out']);
-          if ($outTs > $inTs) {
-            $wm = (int) floor(($outTs - $inTs) / 60);
+          $actualInTs = strtotime((string) $row['time_in']);
+          $actualOutTs = strtotime((string) $row['time_out']);
+
+          // Determine office schedule for this log
+          $officeStart = (string) ($row['office_start'] ?? '08:00:00');
+          $officeEnd = (string) ($row['office_end'] ?? '17:00:00');
+          $isGraveyard = substr($officeStart, 0, 5) > substr($officeEnd, 0, 5);
+
+          $schedInTs = strtotime($ld . ' ' . $officeStart);
+          $schedOutTs = strtotime($ld . ' ' . $officeEnd);
+          if ($isGraveyard) {
+            $schedOutTs = strtotime('+1 day', $schedOutTs);
+          }
+
+          // Pay counting starts at office_start
+          $effectiveInTs = $schedInTs;
+          $effectiveOutTs = min($actualOutTs, $schedOutTs);
+
+          if ($effectiveOutTs > $effectiveInTs) {
+            $rawWm = (int) floor(($effectiveOutTs - $effectiveInTs) / 60);
+            // Round down to the nearest full hour as per instruction
+            $wm = (int) floor($rawWm / 60) * 60;
           }
         }
         $workedMinutes += $wm;
@@ -261,10 +282,13 @@ if (!$hasAttendanceLogs || !$hasEmployeesTable) {
         $rowDeduction = (float) ($row['deduction_amount'] ?? 0);
         $lateMinutes = (int) ($row['late_minutes'] ?? 0);
         if ($rowDeduction <= 0 && $deductionPerMinute > 0 && $hasLateMinutesColumn) {
-          $rowDeduction = max(0, $lateMinutes - 60) * $deductionPerMinute;
+          // Removed 60-minute grace period per "deduction per minute" instruction.
+          $rowDeduction = max(0, $lateMinutes) * $deductionPerMinute;
         }
         $deductionSum += $rowDeduction;
       }
+
+
       $presentDays = count($datesPresent);
       $hoursWorked = $workedMinutes / 60.0;
       $gross = $hoursWorked * $hourlyRate;
@@ -282,18 +306,31 @@ $allowance = 0.0;
 $overtimePay = 0.0;
 
 $payrollDeductionLines = [];
-$totalConfigurableDeductions = 0.0;
-if ($error === null) {
+  $totalConfigurableDeductions = 0.0;
+  $payrollDeductionLines = [];
   try {
+    $lastDayOfMonth = date('Y-m-t', strtotime($rangeStart));
+    $isLastWeek = ($rangeStart <= $lastDayOfMonth && $rangeEnd >= $lastDayOfMonth);
+    $shouldApplyStatutory = ($period === 'month' || $isLastWeek);
+
     eg_ensure_payroll_deduction_types($pdo);
     $stmt = $pdo->query('SELECT label, default_amount FROM payroll_deduction_types ORDER BY id ASC');
     $payrollDeductionLines = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    foreach ($payrollDeductionLines as $line) {
-      $totalConfigurableDeductions += (float) ($line['default_amount'] ?? 0);
+
+    if ($shouldApplyStatutory) {
+      foreach ($payrollDeductionLines as $line) {
+        $totalConfigurableDeductions += (float) ($line['default_amount'] ?? 0);
+      }
+    } else {
+      foreach ($payrollDeductionLines as $k => $line) {
+        $payrollDeductionLines[$k]['default_amount'] = 0.00;
+      }
     }
   } catch (Throwable $e) {
     $payrollDeductionLines = [];
   }
+
+
 
   try {
     $loanStmt = $pdo->prepare("
@@ -327,9 +364,9 @@ if ($error === null) {
   } catch (Throwable $e) {
     $cashAdvanceDeduction = 0.0;
   }
-}
 
 $totalStatutoryAndOther = $totalConfigurableDeductions + $otherDeductions;
+
 $totalDeductionsAll = $totalStatutoryAndOther + $tardinessAmount + $cashAdvanceDeduction;
 $net = $gross - $totalDeductionsAll;
 
@@ -678,13 +715,13 @@ if (($_GET['export'] ?? '') === 'excel') {
           <div class="eg-payslip-sign-row">
             <div class="eg-payslip-sign-block">
               <div>Prepared by</div>
-              <div class="eg-payslip-sign-line"></div>
+              <div class="eg-payslip-sign-line" style="font-weight: 700;">ANNA MARIE VILLANUEVA</div>
               <div>HR Officer</div>
               <div style="margin-top: 8px">Date: _______________</div>
             </div>
             <div class="eg-payslip-sign-block">
               <div>Approved by</div>
-              <div class="eg-payslip-sign-line"></div>
+              <div class="eg-payslip-sign-line" style="font-weight: 700;">REGIN MATA</div>
               <div>Management</div>
               <div style="margin-top: 8px">Date: _______________</div>
             </div>

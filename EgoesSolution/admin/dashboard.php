@@ -18,6 +18,7 @@ $recentLogs = [];
 $employeeStatusList = [];
 $effectiveWorkdayDate = date('Y-m-d');
 $isGraveyardShift = false;
+$withinWorkHours = false;
 if ($officeId) {
     $hasOfficeTimeInColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_in'")->rowCount() > 0;
     $hasOfficeTimeOutColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_out'")->rowCount() > 0;
@@ -37,6 +38,21 @@ if ($officeId) {
             $isGraveyardShift = $officeTimeInOnly > $officeTimeOutOnly;
             if ($isGraveyardShift && date('H:i:s') <= $officeTimeOutOnly) {
                 $effectiveWorkdayDate = date('Y-m-d', strtotime('-1 day'));
+            }
+            // Determine if we are still within today's working hours based on time-of-day.
+            $nowTime = date('H:i:s');
+            if ($officeTimeInOnly !== '' && $officeTimeOutOnly !== '') {
+                if ($isGraveyardShift) {
+                    // Graveyard: e.g. 20:00–05:00 → in-hours if time >= 20:00 OR time <= 05:00.
+                    if ($nowTime >= $officeTimeInOnly || $nowTime <= $officeTimeOutOnly) {
+                        $withinWorkHours = true;
+                    }
+                } else {
+                    // Normal shift: in-hours if between start and end.
+                    if ($nowTime >= $officeTimeInOnly && $nowTime <= $officeTimeOutOnly) {
+                        $withinWorkHours = true;
+                    }
+                }
             }
         }
     }

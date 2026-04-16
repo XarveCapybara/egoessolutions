@@ -37,15 +37,16 @@ $currentPage = basename($_SERVER['PHP_SELF'] ?? '');
       <i class="bi bi-calendar-check"></i>
       <span>Office Attendance</span>
     </a>
+    <a href="memos.php" class="eg-sidebar-link <?= $currentPage === 'memos.php' ? 'active' : '' ?>">
+      <i class="bi bi-journal-text"></i>
+      <span>Memorandums</span>
+    </a>
     <a href="settings.php" class="eg-sidebar-link <?= $currentPage === 'settings.php' ? 'active' : '' ?>">
+
       <i class="bi bi-gear"></i>
       <span>Settings</span>
     </a>
-    <a href="profile.php" class="eg-sidebar-link <?= $currentPage === 'profile.php' ? 'active' : '' ?>">
-      <i class="bi bi-person"></i>
-      <span>Profile</span>
-    </a>
-    <a href="../auth/logout.php" class="eg-sidebar-link eg-sidebar-link-danger mt-3">
+    <a href="../auth/logout.php" class="eg-sidebar-link eg-sidebar-link-danger">
       <i class="bi bi-box-arrow-right"></i>
       <span>Logout</span>
     </a>

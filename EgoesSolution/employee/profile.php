@@ -58,7 +58,11 @@ $p = $defaults;
 
 $message = null;
 $error = null;
+$isModal = isset($_GET['modal']) && $_GET['modal'] === '1';
 $editMode = isset($_GET['edit']) && $_GET['edit'] === '1';
+$profileBaseUrl = $isModal ? 'profile.php?modal=1' : 'profile.php';
+$profileEditUrl = $isModal ? 'profile.php?modal=1&edit=1#edit-profile' : 'profile.php?edit=1#edit-profile';
+$passwordPanelOpen = false;
 
 try {
   $pdo->exec('
@@ -118,7 +122,10 @@ if ($p['email'] === '' && !empty($_SESSION['user_email'])) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-  $firstName = trim($_POST['first_name'] ?? '');
+  $action = $_POST['action'] ?? 'update_profile';
+
+  if ($action === 'update_profile') {
+    $firstName = trim($_POST['first_name'] ?? '');
   $lastName = trim($_POST['last_name'] ?? '');
   $nickname = trim($_POST['nickname'] ?? '');
   $dob = trim($_POST['date_of_birth'] ?? '');
@@ -223,8 +230,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
       $finalDisplayName = $p['last_name'] !== '' ? $p['last_name'] . ', ' . $p['first_name'] : $p['first_name'];
       $_SESSION['display_name'] = $p['nickname'] !== '' ? $p['nickname'] : $finalDisplayName;
-      header('Location: profile.php?saved=1');
+      header('Location: ' . ($isModal ? 'profile.php?modal=1&saved=1' : 'profile.php?saved=1'));
       exit;
+    }
+  }
+  } elseif ($action === 'update_password') {
+    $passwordPanelOpen = true;
+    $currentPassword = trim($_POST['current_password'] ?? '');
+    $newPassword = trim($_POST['new_password'] ?? '');
+    $confirmPassword = trim($_POST['confirm_password'] ?? '');
+
+    if ($currentPassword === '' || $newPassword === '' || $confirmPassword === '') {
+      $error = 'Please complete all password fields.';
+    } elseif (strlen($newPassword) < 8) {
+      $error = 'New password must be at least 8 characters.';
+    } elseif ($newPassword !== $confirmPassword) {
+      $error = 'New password and confirmation do not match.';
+    } elseif ($userId <= 0) {
+      $error = 'Invalid user session. Please log in again.';
+    } else {
+      try {
+        $userStmt = $pdo->prepare('SELECT id, password_hash FROM users WHERE id = ? AND role = "employee" LIMIT 1');
+        $userStmt->execute([$userId]);
+        $row = $userStmt->fetch();
+        if (!$row || !password_verify($currentPassword, (string) $row['password_hash'])) {
+          $error = 'Current password is incorrect.';
+        } else {
+          $newHash = password_hash($newPassword, PASSWORD_DEFAULT);
+          $updateStmt = $pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?');
+          $updateStmt->execute([$newHash, $userId]);
+          $message = 'Password updated successfully.';
+        }
+      } catch (PDOException $e) {
+        $error = 'Unable to update password. Please try again.';
+      }
     }
   }
 }
@@ -291,17 +330,16 @@ function eg_disp(?string $s): string
   <link rel="stylesheet" href="../assets/css/style.css" />
 </head>
 
-<body class="bg-light eg-profile-page eg-profile-page--ref">
-  <?php include __DIR__ . '/../includes/header.php'; ?>
-
-  <div class="container-fluid pt-3">
-    <div class="eg-profile-back-row">
-      <a href="dashboard.php" class="eg-back-link eg-back-link--profile">
-        <i class="bi bi-arrow-left"></i>
-        <span>Back to Dashboard</span>
-      </a>
-    </div>
-  </div>
+<body class="bg-light eg-profile-page eg-profile-page--ref<?= $isModal ? ' eg-profile-page--modal' : '' ?>">
+  <?php if (!$isModal): ?>
+    <?php include __DIR__ . '/../includes/header.php'; ?>
+    <div class="container-fluid">
+      <div class="row">
+        <?php include __DIR__ . '/../includes/sidebar_employee.php'; ?>
+        <main class="col-12 col-md-9 col-lg-10 py-3">
+  <?php else: ?>
+    <main class="py-3">
+  <?php endif; ?>
 
   <div class="container-fluid pb-4">
     <?php if ($message): ?>
@@ -311,8 +349,9 @@ function eg_disp(?string $s): string
       <div class="alert alert-danger eg-profile-alert mb-3"><?= htmlspecialchars($error) ?></div>
     <?php endif; ?>
 
-    <div class="eg-profile-container eg-profile-container--ref">
-      <div class="eg-profile-ref-card" id="edit-profile">
+    <div class="eg-profile-wrapper">
+      <div class="eg-profile-container eg-profile-container--ref">
+        <div class="eg-profile-ref-card" id="edit-profile">
         <div class="eg-profile-ref-cardhead">
           <div class="eg-profile-ref-hero">
             <div class="eg-profile-ref-avatar position-relative" style="overflow: hidden;">
@@ -337,14 +376,14 @@ function eg_disp(?string $s): string
             <div class="eg-profile-ref-intro">
               <h1 class="eg-profile-ref-name"><?= htmlspecialchars($showName) ?></h1>
               <?php if (!$editMode): ?>
-                <a href="profile.php?edit=1#edit-profile" class="eg-profile-ref-nicklink">Edit Nickname</a>
+                <a href="<?= $profileEditUrl ?>" class="eg-profile-ref-nicklink">Edit Nickname</a>
               <?php else: ?>
                 <span class="eg-profile-ref-nicklink eg-profile-ref-nicklink--muted">Editing profile</span>
               <?php endif; ?>
             </div>
           </div>
           <?php if (!$editMode): ?>
-            <a href="profile.php?edit=1#edit-profile" class="eg-profile-ref-edit" aria-label="Edit profile">
+            <a href="<?= $profileEditUrl ?>" class="eg-profile-ref-edit" aria-label="Edit profile">
               <i class="bi bi-pencil"></i>
             </a>
           <?php endif; ?>
@@ -356,6 +395,7 @@ function eg_disp(?string $s): string
 
         <?php if ($editMode): ?>
           <form method="post" enctype="multipart/form-data" class="eg-profile-ref-form">
+            <input type="hidden" name="action" value="update_profile" />
             <input type="file" id="profile_image" name="profile_image" accept="image/jpeg,image/png,image/webp,image/gif"
               class="d-none" />
             <div class="eg-profile-ref-grid">
@@ -401,7 +441,7 @@ function eg_disp(?string $s): string
               </div>
             </div>
             <div class="eg-profile-ref-form-actions">
-              <a href="profile.php" class="eg-profile-ref-btn eg-profile-ref-btn--ghost">Cancel</a>
+              <a href="<?= $profileBaseUrl ?>" class="eg-profile-ref-btn eg-profile-ref-btn--ghost">Cancel</a>
               <button type="submit" class="eg-profile-ref-btn eg-profile-ref-btn--primary">Save changes</button>
             </div>
           </form>
@@ -436,6 +476,40 @@ function eg_disp(?string $s): string
               <dd><?= htmlspecialchars(eg_disp($profile['email'] ?? '')) ?></dd>
             </div>
           </dl>
+          <div class="eg-panel p-4 mt-3 mb-3 eg-change-password-panel">
+            <div class="d-flex align-items-center justify-content-between gap-2">
+              <h5 class="mb-0">Change Password</h5>
+              <button
+                class="btn btn-outline-primary btn-sm"
+                type="button"
+                data-bs-toggle="collapse"
+                data-bs-target="#changePasswordCollapse"
+                aria-expanded="<?= $passwordPanelOpen ? 'true' : 'false' ?>"
+                aria-controls="changePasswordCollapse">
+                Change Password
+              </button>
+            </div>
+            <div class="collapse<?= $passwordPanelOpen ? ' show' : '' ?> mt-3" id="changePasswordCollapse">
+              <form method="post" class="row g-3">
+                <input type="hidden" name="action" value="update_password" />
+                <div class="col-md-4">
+                  <label for="current_password" class="form-label">Current Password</label>
+                  <input type="password" class="form-control" id="current_password" name="current_password" required />
+                </div>
+                <div class="col-md-4">
+                  <label for="new_password" class="form-label">New Password</label>
+                  <input type="password" class="form-control" id="new_password" name="new_password" minlength="8" required />
+                </div>
+                <div class="col-md-4">
+                  <label for="confirm_password" class="form-label">Confirm New Password</label>
+                  <input type="password" class="form-control" id="confirm_password" name="confirm_password" minlength="8" required />
+                </div>
+                <div class="col-12">
+                  <button type="submit" class="btn btn-primary">Update Password</button>
+                </div>
+              </form>
+            </div>
+          </div>
           <hr class="eg-profile-ref-divider" />
           <h2 class="eg-profile-ref-section-title">Employee Barcode</h2>
           <?php if ($employeeCode !== ''): ?>
@@ -450,13 +524,16 @@ function eg_disp(?string $s): string
           <?php else: ?>
             <p class="text-muted mb-2">No employee code found yet.</p>
           <?php endif; ?>
-          <p class="eg-profile-ref-hint mb-0">
-            <a href="profile.php?edit=1#edit-profile" class="eg-profile-ref-link">Edit personal details</a>
-          </p>
         <?php endif; ?>
+        </div>
       </div>
     </div>
   </div>
+  </main>
+  <?php if (!$isModal): ?>
+      </div>
+    </div>
+  <?php endif; ?>
   <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
     integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
@@ -567,6 +644,18 @@ function eg_disp(?string $s): string
   <?php endif; ?>
   <script>
     document.addEventListener('DOMContentLoaded', function () {
+      <?php if ($isModal && isset($_GET['saved'])): ?>
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          type: 'eg_profile_updated',
+          profile: {
+            displayName: <?= json_encode($showName, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>,
+            avatarUrl: <?= json_encode((string) ($avatarUrl ?? ''), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>
+          }
+        }, window.location.origin);
+      }
+      <?php endif; ?>
+
       const fileInput = document.getElementById('profile_image');
       const preview = document.getElementById('avatarPreview');
       const fallback = document.getElementById('avatarIconFallback');
@@ -585,6 +674,7 @@ function eg_disp(?string $s): string
       }
     });
   </script>
+  <?php include __DIR__ . '/../includes/footer.php'; ?>
 </body>
 
 </html>

@@ -166,7 +166,7 @@ if (!$hasEmployeesTable || !$hasAttendanceLogs || $userId <= 0) {
         $hasLateMinutesColumn = $pdo->query("SHOW COLUMNS FROM attendance_logs LIKE 'late_minutes'")->rowCount() > 0;
         $selectDeduction = $hasDeductionAmountColumn ? 'al.deduction_amount' : '0.00 AS deduction_amount';
         $selectLateMinutes = $hasLateMinutesColumn ? 'al.late_minutes' : '0 AS late_minutes';
-        $sql = "SELECT al.log_date, al.time_in, al.time_out, {$selectDeduction}, {$selectLateMinutes}, o.name AS office_name FROM attendance_logs al JOIN offices o ON al.office_id = o.id WHERE al.employee_id = ? AND al.log_date BETWEEN ? AND ?";
+        $sql = "SELECT al.log_date, al.time_in, al.time_out, {$selectDeduction}, {$selectLateMinutes}, o.name AS office_name, o.time_in AS office_start, o.time_out AS office_end FROM attendance_logs al JOIN offices o ON al.office_id = o.id WHERE al.employee_id = ? AND al.log_date BETWEEN ? AND ?";
         $params = [$employeeId, $rangeStart, $rangeEnd];
         if ($officeId > 0) {
             $sql .= ' AND al.office_id = ?';
@@ -190,22 +190,44 @@ if (!$hasEmployeesTable || !$hasAttendanceLogs || $userId <= 0) {
                 }
                 $wm = 0;
                 if (!empty($row['time_in']) && !empty($row['time_out'])) {
-                    $inTs = strtotime((string) $row['time_in']);
-                    $outTs = strtotime((string) $row['time_out']);
-                    if ($outTs > $inTs) {
-                        $wm = (int) floor(($outTs - $inTs) / 60);
+                    $actualInTs = strtotime((string) $row['time_in']);
+                    $actualOutTs = strtotime((string) $row['time_out']);
+
+                    // Determine office schedule for this log
+                    $officeStart = (string) ($row['office_start'] ?? '08:00:00');
+                    $officeEnd = (string) ($row['office_end'] ?? '17:00:00');
+                    $isGraveyard = substr($officeStart, 0, 5) > substr($officeEnd, 0, 5);
+
+                    $schedInTs = strtotime($ld . ' ' . $officeStart);
+                    $schedOutTs = strtotime($ld . ' ' . $officeEnd);
+                    if ($isGraveyard) {
+                        $schedOutTs = strtotime('+1 day', $schedOutTs);
+                    }
+
+                    // Per instruction: count starts at office_start (even if late/early)
+                    // But stop at whichever is earlier: actual check-out or office end.
+                    $effectiveInTs = $schedInTs;
+                    $effectiveOutTs = min($actualOutTs, $schedOutTs);
+
+                    if ($effectiveOutTs > $effectiveInTs) {
+                        $wm = (int) floor(($effectiveOutTs - $effectiveInTs) / 60);
+                        // Round down to the nearest full hour as per instruction
+                        $fullHours = (int) floor($wm / 60);
+                        $workedMinutes += ($fullHours * 60);
                     }
                 }
-                $workedMinutes += $wm;
                 $rowDeduction = (float) ($row['deduction_amount'] ?? 0);
                 $lateMinutes = (int) ($row['late_minutes'] ?? 0);
                 if ($rowDeduction <= 0 && $deductionPerMinute > 0 && $hasLateMinutesColumn) {
-                    $rowDeduction = max(0, $lateMinutes - 60) * $deductionPerMinute;
+                    // Removed 60-minute grace period per "deduction per minute" instruction.
+                    $rowDeduction = max(0, $lateMinutes) * $deductionPerMinute;
                 }
                 $deductionSum += $rowDeduction;
             }
             $presentDays = count($datesPresent);
             $hoursWorked = $workedMinutes / 60.0;
+
+
             $gross = $hoursWorked * $hourlyRate;
             $deductionsTotal = $deductionSum;
         }
@@ -220,18 +242,31 @@ $specialHoliday = 0.0;
 $allowance = 0.0;
 $overtimePay = 0.0;
 
-$totalConfigurableDeductions = 0.0;
-if ($error === null) {
+    $totalConfigurableDeductions = 0.0;
+    $payrollDeductionLines = [];
     try {
+        $lastDayOfMonth = date('Y-m-t', strtotime($rangeStart));
+        $isLastWeek = ($rangeStart <= $lastDayOfMonth && $rangeEnd >= $lastDayOfMonth);
+        $shouldApplyStatutory = ($period === 'month' || $isLastWeek);
+
         eg_ensure_payroll_deduction_types($pdo);
         $stmt = $pdo->query('SELECT label, default_amount FROM payroll_deduction_types ORDER BY id ASC');
         $payrollDeductionLines = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        foreach ($payrollDeductionLines as $line) {
-            $totalConfigurableDeductions += (float) ($line['default_amount'] ?? 0);
+
+        if ($shouldApplyStatutory) {
+            foreach ($payrollDeductionLines as $line) {
+                $totalConfigurableDeductions += (float) ($line['default_amount'] ?? 0);
+            }
+        } else {
+            foreach ($payrollDeductionLines as $k => $line) {
+                $payrollDeductionLines[$k]['default_amount'] = 0.00;
+            }
         }
     } catch (Throwable $e) {
         $payrollDeductionLines = [];
     }
+
+
 
     try {
         $loanStmt = $pdo->prepare("SELECT amount, advance_date, status FROM cash_advances WHERE employee_id = ? AND status = 'deducted' ORDER BY advance_date, id");
@@ -251,7 +286,6 @@ if ($error === null) {
             if (!$isDueThisPeriod) {
                 continue;
             }
-            $amt = (float) ($lr['amount'] ?? 0);
             if ($amt > 0) {
                 $cashAdvanceDeduction += $amt;
             }
@@ -259,13 +293,13 @@ if ($error === null) {
     } catch (Throwable $e) {
         $cashAdvanceDeduction = 0.0;
     }
-}
 
 $totalStatutoryAndOther = $totalConfigurableDeductions + $otherDeductions;
 $totalDeductionsAll = $totalStatutoryAndOther + $tardinessAmount + $cashAdvanceDeduction;
 $net = $gross - $totalDeductionsAll;
 $totalDeductionsLateAttendanceOnly = $tardinessAmount + $cashAdvanceDeduction;
 $netWithConfigurableLinesAsZero = $gross - $totalDeductionsLateAttendanceOnly;
+
 
 $fmtMoney = static function (float $n): string {
     return number_format($n, 2, '.', ',');
@@ -293,22 +327,10 @@ $fmtMoney = static function (float $n): string {
   <body class="bg-light">
     <?php include __DIR__ . '/../includes/header.php'; ?>
 
-    <div class="container-fluid py-4">
-      <nav class="eg-employee-nav mb-4">
-        <a href="dashboard.php" class="eg-employee-nav-link">
-          <i class="bi bi-house-door"></i>
-          <span>Dashboard</span>
-        </a>
-        <a href="payslip.php" class="eg-employee-nav-link active">
-          <i class="bi bi-receipt"></i>
-          <span>Payslip Archive</span>
-        </a>
-        <a href="../auth/logout.php" class="eg-employee-nav-link eg-employee-nav-link-danger">
-          <i class="bi bi-box-arrow-right"></i>
-          <span>Logout</span>
-        </a>
-      </nav>
-
+    <div class="container-fluid">
+      <div class="row">
+        <?php include __DIR__ . '/../includes/sidebar_employee.php'; ?>
+        <main class="col-12 col-md-9 col-lg-10 py-4">
       <div class="eg-panel">
         <h5 class="mb-3">My Payslip Archive</h5>
         <p class="text-muted small mb-3">
@@ -483,6 +505,7 @@ $fmtMoney = static function (float $n): string {
             </div>
           </div>
         <?php endif; ?>
+      </div></main>
       </div>
     </div>
 
@@ -508,6 +531,7 @@ $fmtMoney = static function (float $n): string {
         }
       })();
     </script>
+    <?php include __DIR__ . '/../includes/footer.php'; ?>
   </body>
 </html>
 

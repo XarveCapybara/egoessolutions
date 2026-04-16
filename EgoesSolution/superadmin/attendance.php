@@ -26,10 +26,10 @@ if ($rawOfficeId === null || $rawOfficeId === '') {
 $employeeFilter = trim((string) ($_GET['employee'] ?? ''));
 $dateFrom = trim((string) ($_GET['date_from'] ?? ''));
 $dateTo = trim((string) ($_GET['date_to'] ?? ''));
-$limitInput = (int) ($_GET['limit'] ?? 50);
-$allowedLimits = [25, 50, 100, 200];
-if (!in_array($limitInput, $allowedLimits, true)) {
-    $limitInput = 50;
+$limitInput = 25;
+$pageInput = (int) ($_GET['page'] ?? 1);
+if ($pageInput < 1) {
+    $pageInput = 1;
 }
 
 $today = date('Y-m-d');
@@ -54,7 +54,6 @@ $attendanceQuickQuery = function (array $base, string $from, string $to): string
 
 $quickBase = [
     'employee' => $employeeFilter,
-    'limit' => $limitInput,
 ];
 if ($officeChoiceMade) {
     $quickBase['office_id'] = $officeFilter;
@@ -63,8 +62,11 @@ $yesterday = date('Y-m-d', strtotime('-1 day'));
 $last7From = date('Y-m-d', strtotime('-6 days'));
 
 $logs = [];
+$totalMatchingRows = 0;
+$totalPages = 1;
+$pageOffset = ($pageInput - 1) * $limitInput;
 if ($officeChoiceMade && $pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount()) {
-    $sql = '
+    $baseSql = '
         SELECT
             al.*,
             u.full_name,
@@ -75,20 +77,51 @@ if ($officeChoiceMade && $pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowC
         JOIN offices o ON al.office_id = o.id
         WHERE al.log_date BETWEEN ? AND ?
     ';
+    $countSql = '
+        SELECT COUNT(*)
+        FROM attendance_logs al
+        JOIN employees e ON al.employee_id = e.id
+        JOIN users u ON e.user_id = u.id
+        JOIN offices o ON al.office_id = o.id
+        WHERE al.log_date BETWEEN ? AND ?
+    ';
     $params = [$dateFrom, $dateTo];
     if ($officeFilter > 0) {
-        $sql .= ' AND al.office_id = ?';
+        $baseSql .= ' AND al.office_id = ?';
+        $countSql .= ' AND al.office_id = ?';
         $params[] = $officeFilter;
     }
     if ($employeeFilter !== '') {
-        $sql .= ' AND u.full_name LIKE ?';
+        $baseSql .= ' AND u.full_name LIKE ?';
+        $countSql .= ' AND u.full_name LIKE ?';
         $params[] = '%' . $employeeFilter . '%';
     }
-    $sql .= ' ORDER BY al.log_date DESC, al.time_in DESC LIMIT ' . $limitInput;
+    $countStmt = $pdo->prepare($countSql);
+    $countStmt->execute($params);
+    $totalMatchingRows = (int) $countStmt->fetchColumn();
+    $totalPages = max(1, (int) ceil($totalMatchingRows / $limitInput));
+    if ($pageInput > $totalPages) {
+        $pageInput = $totalPages;
+        $pageOffset = ($pageInput - 1) * $limitInput;
+    }
+
+    $sql = $baseSql . ' ORDER BY al.log_date DESC, al.time_in DESC LIMIT ' . $limitInput . ' OFFSET ' . $pageOffset;
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     $logs = $stmt->fetchAll();
 }
+
+$paginationQuery = function (int $targetPage) use ($rawOfficeId, $employeeFilter, $dateFrom, $dateTo): string {
+    $q = [
+        'office_id' => $rawOfficeId,
+        'employee' => $employeeFilter,
+        'date_from' => $dateFrom,
+        'date_to' => $dateTo,
+        'page' => max(1, $targetPage),
+    ];
+    return '?' . http_build_query($q);
+};
+
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -144,14 +177,6 @@ if ($officeChoiceMade && $pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowC
                 <label class="form-label" for="employee">Employee</label>
                 <input type="text" class="form-control" id="employee" name="employee" placeholder="Search name" value="<?= htmlspecialchars($employeeFilter, ENT_QUOTES, 'UTF-8') ?>" />
               </div>
-              <div class="col-12 col-sm-6 col-md-3">
-                <label class="form-label" for="limit">Rows</label>
-                <select class="form-select" id="limit" name="limit">
-                  <?php foreach ($allowedLimits as $lim): ?>
-                    <option value="<?= $lim ?>" <?= $limitInput === $lim ? ' selected' : '' ?>><?= $lim ?></option>
-                  <?php endforeach; ?>
-                </select>
-              </div>
               <div class="col-12 col-sm-6 col-md-3 d-grid">
                 <button type="submit" class="btn btn-primary">Apply filters</button>
               </div>
@@ -166,7 +191,7 @@ if ($officeChoiceMade && $pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowC
               </div>
             </div>
           </form>
-          <div class="table-responsive bg-white rounded-3 shadow-sm p-3">
+          <div class="table-responsive bg-white rounded-3 shadow-sm p-3" id="attendanceTable">
             <table class="table table-bordered table-sm align-middle mb-0">
               <thead class="table-light">
                 <tr>
@@ -197,6 +222,36 @@ if ($officeChoiceMade && $pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowC
                 <?php endif; ?>
               </tbody>
             </table>
+            <?php if ($officeChoiceMade && $totalMatchingRows > 0): ?>
+              <div class="d-flex justify-content-between align-items-center mt-3">
+                <div class="text-muted small">
+                  Showing <?= (int) ($pageOffset + 1) ?>–<?= (int) min($pageOffset + $limitInput, $totalMatchingRows) ?> of <?= (int) $totalMatchingRows ?> rows
+                </div>
+                <div class="btn-group" role="group" aria-label="Attendance table pagination">
+                  <?php if ($pageInput <= 1): ?>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" disabled aria-disabled="true">
+                      <i class="bi bi-arrow-left"></i>
+                    </button>
+                  <?php else: ?>
+                    <a class="btn btn-sm btn-outline-secondary" href="<?= htmlspecialchars($paginationQuery($pageInput - 1), ENT_QUOTES, 'UTF-8') ?>">
+                      <i class="bi bi-arrow-left"></i>
+                    </a>
+                  <?php endif; ?>
+                  <button type="button" class="btn btn-sm btn-outline-secondary disabled">
+                    Page <?= (int) $pageInput ?> / <?= (int) $totalPages ?>
+                  </button>
+                  <?php if ($pageInput >= $totalPages): ?>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" disabled aria-disabled="true">
+                      <i class="bi bi-arrow-right"></i>
+                    </button>
+                  <?php else: ?>
+                    <a class="btn btn-sm btn-outline-secondary" href="<?= htmlspecialchars($paginationQuery($pageInput + 1), ENT_QUOTES, 'UTF-8') ?>">
+                      <i class="bi bi-arrow-right"></i>
+                    </a>
+                  <?php endif; ?>
+                </div>
+              </div>
+            <?php endif; ?>
           </div>
         </main>
       </div>

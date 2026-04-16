@@ -115,7 +115,6 @@ if ($officeId > 0) {
                   class="form-control"
                   placeholder="Scan or type barcode ID"
                   autocomplete="off"
-                  required
                 />
               </div>
               <div class="mb-3">
@@ -125,7 +124,21 @@ if ($officeId > 0) {
                   </button>
                 </div>
               </div>
-              <button type="submit" class="btn btn-primary" id="submitScanBtn">Submit Time In</button>
+              <div class="d-flex flex-wrap gap-2">
+                <button type="submit" class="btn btn-primary" id="submitScanBtn">Submit Time In</button>
+                <button
+                  type="submit"
+                  class="btn btn-outline-danger"
+                  id="bulkTimeoutBtn"
+                  name="bulk_timeout"
+                  value="1"
+                >
+                  Time Out All (Today)
+                </button>
+              </div>
+              <p class="text-muted small mt-2 mb-0">
+                <strong>Time Out All</strong> will set time-out for all employees in this office who have a time-in but no time-out yet for this workday.
+              </p>
             </form>
           </div>
 
@@ -153,6 +166,7 @@ if ($officeId > 0) {
       const clientNowInput = document.getElementById('client_now');
       const barcodeInput = document.getElementById('barcode-input');
       const startCameraBtn = document.getElementById('startCameraBtn');
+      const bulkTimeoutBtn = document.getElementById('bulkTimeoutBtn');
       const stopCameraBtn = document.getElementById('stopCameraBtn');
       const scannerFloatPanel = document.getElementById('scannerFloatPanel');
       const scannerVideo = document.getElementById('scannerVideo');
@@ -181,12 +195,67 @@ if ($officeId > 0) {
       }
       refreshClientNow();
 
+      function secondsSinceMidnight(date) {
+        return date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds();
+      }
+
       function updateCurrentClock() {
         const el = document.getElementById('currentClock');
         if (!el) return;
         const now = new Date();
         const timeText = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
         el.textContent = timeText;
+
+        // Restrict bulk Time Out All button to office hours window (server also validates).
+        if (bulkTimeoutBtn) {
+          const officeIn = '<?= isset($office['time_in']) ? substr((string) $office['time_in'], 0, 8) : '' ?>';
+          const officeOut = '<?= isset($office['time_out']) ? substr((string) $office['time_out'], 0, 8) : '' ?>';
+
+          if (!officeIn || !officeOut) {
+            bulkTimeoutBtn.disabled = true;
+            bulkTimeoutBtn.title = 'Office schedule not configured.';
+            return;
+          }
+
+          const toSec = (hhmmss) => {
+            const parts = hhmmss.split(':').map(Number);
+            if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return null;
+            return parts[0] * 3600 + parts[1] * 60 + parts[2];
+          };
+
+          const nowSec = secondsSinceMidnight(now);
+          const inSec = toSec(officeIn);
+          const outSec = toSec(officeOut);
+          if (inSec === null || outSec === null) {
+            bulkTimeoutBtn.disabled = true;
+            bulkTimeoutBtn.title = 'Office schedule is invalid.';
+            return;
+          }
+
+          const isGraveyard = inSec > outSec;
+          const allowedStart = (inSec - 3600 + 86400) % 86400; // 1h before time-in
+          let bulkStart;
+          let bulkEnd;
+          let allowed = false;
+
+          if (isGraveyard) {
+            // Graveyard: only from time-out until 1h after time-out (e.g. 05:00–06:00)
+            bulkStart = outSec;
+            bulkEnd = (outSec + 3600) % 86400;
+            allowed = nowSec >= bulkStart && nowSec <= bulkEnd;
+          } else {
+            // Normal shift: 1h before in until 1h after out
+            bulkStart = allowedStart;
+            bulkEnd = Math.min(outSec + 3600, 86399);
+            allowed = nowSec >= bulkStart && nowSec <= bulkEnd;
+          }
+
+          bulkTimeoutBtn.disabled = !allowed;
+
+          bulkTimeoutBtn.title = bulkTimeoutBtn.disabled
+            ? 'Time Out All is only available from 1 hour before shift start until 1 hour after office end.'
+            : '';
+        }
       }
       updateCurrentClock();
       setInterval(updateCurrentClock, 1000);
@@ -219,8 +288,17 @@ if ($officeId > 0) {
         }, 120);
       }
 
-      scanForm.addEventListener('submit', function () {
+      scanForm.addEventListener('submit', function (event) {
         refreshClientNow();
+        if (document.activeElement === bulkTimeoutBtn) {
+          const confirmed = window.confirm('Time out all employees who have a time-in but no time-out yet for this workday?');
+          if (!confirmed) {
+            event.preventDefault();
+            return;
+          }
+          scanTypeInput.value = 'out';
+          submitScanBtn.textContent = 'Timing Out All...';
+        }
       });
 
       function stopCamera(statusMessage) {

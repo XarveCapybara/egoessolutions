@@ -36,9 +36,9 @@ if ($weekInput !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $weekInput)) {
     $picked = new DateTimeImmutable('today');
 }
 $weekMonday = eg_payroll_monday_sr($picked);
-$weekSunday = $weekMonday->modify('+6 days');
+$weekFriday = $weekMonday->modify('+4 days');
 $weekStartStr = $weekMonday->format('Y-m-d');
-$weekEndStr = $weekSunday->format('Y-m-d');
+$weekEndStr = $weekFriday->format('Y-m-d');
 
 $monthInput = trim((string) ($_POST['month'] ?? ''));
 if ($monthInput !== '' && preg_match('/^\d{4}-\d{2}$/', $monthInput)) {
