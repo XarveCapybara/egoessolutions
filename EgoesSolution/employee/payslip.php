@@ -7,6 +7,7 @@ if (($_SESSION['role'] ?? '') !== 'employee') {
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../includes/payroll_deduction_types.php';
+require_once __DIR__ . '/../includes/eg_worked_minutes.php';
 
 $name = $_SESSION['display_name'] ?? 'Employee';
 $userId = (int) ($_SESSION['user_id'] ?? 0);
@@ -50,6 +51,16 @@ function eg_payslip_period_display(string $period, DateTimeImmutable $weekMonday
     return $weekMonday->format('M j') . ' – ' . $weekFriday->format('M j, Y');
 }
 
+function eg_last_payroll_day_of_month(DateTimeImmutable $dateInMonth): DateTimeImmutable
+{
+    $monthEnd = $dateInMonth->modify('last day of this month')->setTime(0, 0, 0);
+    $weekday = (int) $monthEnd->format('N'); // 1=Mon ... 7=Sun
+    if ($weekday >= 6) {
+        $monthEnd = $monthEnd->modify('-' . ($weekday - 5) . ' days');
+    }
+    return $monthEnd;
+}
+
 $period = trim((string) ($_GET['period'] ?? 'week'));
 if ($period !== 'month') {
     $period = 'week';
@@ -88,7 +99,7 @@ $earningsPeriodCol = $period === 'month' ? 'Monthly' : 'Daily / Weekly';
 
 $showDeductions = $period === 'month';
 if ($period === 'week') {
-    $monthEnd = $weekMonday->modify('last day of this month')->setTime(0, 0, 0);
+    $monthEnd = eg_last_payroll_day_of_month($weekMonday);
     $showDeductions = $weekFriday >= $monthEnd;
 }
 
@@ -129,8 +140,8 @@ $positionLabel = 'Employee';
 $employeeCode = '';
 $payrollDeductionLines = [];
 
-if (!$hasEmployeesTable || !$hasAttendanceLogs || $userId <= 0) {
-    $error = 'Employee or attendance data is not available.';
+if (!$hasEmployeesTable || $userId <= 0) {
+    $error = 'Employee data is not available.';
 } else {
     $posField = $hasPositionCol ? 'e.position' : 'NULL AS position';
     $rateField = $hasRateAmountColumn ? 'e.rate_amount' : 'NULL AS rate_amount';
@@ -162,74 +173,53 @@ if (!$hasEmployeesTable || !$hasAttendanceLogs || $userId <= 0) {
             $hourlyRate = $defaultHourly;
         }
 
-        $hasDeductionAmountColumn = $pdo->query("SHOW COLUMNS FROM attendance_logs LIKE 'deduction_amount'")->rowCount() > 0;
-        $hasLateMinutesColumn = $pdo->query("SHOW COLUMNS FROM attendance_logs LIKE 'late_minutes'")->rowCount() > 0;
-        $selectDeduction = $hasDeductionAmountColumn ? 'al.deduction_amount' : '0.00 AS deduction_amount';
-        $selectLateMinutes = $hasLateMinutesColumn ? 'al.late_minutes' : '0 AS late_minutes';
-        $sql = "SELECT al.log_date, al.time_in, al.time_out, {$selectDeduction}, {$selectLateMinutes}, o.name AS office_name, o.time_in AS office_start, o.time_out AS office_end FROM attendance_logs al JOIN offices o ON al.office_id = o.id WHERE al.employee_id = ? AND al.log_date BETWEEN ? AND ?";
-        $params = [$employeeId, $rangeStart, $rangeEnd];
-        if ($officeId > 0) {
-            $sql .= ' AND al.office_id = ?';
-            $params[] = $officeId;
-        }
-        $sql .= ' ORDER BY al.log_date, al.id';
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute($params);
-        $logRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        if (empty($logRows)) {
-            $error = 'No attendance for this employee in the selected period.';
-        } else {
-            $officeName = (string) ($logRows[0]['office_name'] ?? '');
-            $workedMinutes = 0;
-            $deductionSum = 0.0;
-            $datesPresent = [];
-            foreach ($logRows as $row) {
-                $ld = (string) ($row['log_date'] ?? '');
-                if ($ld !== '') {
-                    $datesPresent[$ld] = true;
-                }
-                $wm = 0;
-                if (!empty($row['time_in']) && !empty($row['time_out'])) {
-                    $actualInTs = strtotime((string) $row['time_in']);
-                    $actualOutTs = strtotime((string) $row['time_out']);
-
-                    // Determine office schedule for this log
-                    $officeStart = (string) ($row['office_start'] ?? '08:00:00');
-                    $officeEnd = (string) ($row['office_end'] ?? '17:00:00');
-                    $isGraveyard = substr($officeStart, 0, 5) > substr($officeEnd, 0, 5);
-
-                    $schedInTs = strtotime($ld . ' ' . $officeStart);
-                    $schedOutTs = strtotime($ld . ' ' . $officeEnd);
-                    if ($isGraveyard) {
-                        $schedOutTs = strtotime('+1 day', $schedOutTs);
-                    }
-
-                    // Per instruction: count starts at office_start (even if late/early)
-                    // But stop at whichever is earlier: actual check-out or office end.
-                    $effectiveInTs = $schedInTs;
-                    $effectiveOutTs = min($actualOutTs, $schedOutTs);
-
-                    if ($effectiveOutTs > $effectiveInTs) {
-                        $wm = (int) floor(($effectiveOutTs - $effectiveInTs) / 60);
-                        // Round down to the nearest full hour as per instruction
-                        $fullHours = (int) floor($wm / 60);
-                        $workedMinutes += ($fullHours * 60);
-                    }
-                }
-                $rowDeduction = (float) ($row['deduction_amount'] ?? 0);
-                $lateMinutes = (int) ($row['late_minutes'] ?? 0);
-                if ($rowDeduction <= 0 && $deductionPerMinute > 0 && $hasLateMinutesColumn) {
-                    // Removed 60-minute grace period per "deduction per minute" instruction.
-                    $rowDeduction = max(0, $lateMinutes) * $deductionPerMinute;
-                }
-                $deductionSum += $rowDeduction;
+        if ($hasAttendanceLogs) {
+            $hasDeductionAmountColumn = $pdo->query("SHOW COLUMNS FROM attendance_logs LIKE 'deduction_amount'")->rowCount() > 0;
+            $hasLateMinutesColumn = $pdo->query("SHOW COLUMNS FROM attendance_logs LIKE 'late_minutes'")->rowCount() > 0;
+            $selectDeduction = $hasDeductionAmountColumn ? 'al.deduction_amount' : '0.00 AS deduction_amount';
+            $selectLateMinutes = $hasLateMinutesColumn ? 'al.late_minutes' : '0 AS late_minutes';
+            $sql = "SELECT al.log_date, al.time_in, al.time_out, {$selectDeduction}, {$selectLateMinutes}, o.name AS office_name, o.time_in AS office_start, o.time_out AS office_end FROM attendance_logs al JOIN offices o ON al.office_id = o.id WHERE al.employee_id = ? AND al.log_date BETWEEN ? AND ?";
+            $params = [$employeeId, $rangeStart, $rangeEnd];
+            if ($officeId > 0) {
+                $sql .= ' AND al.office_id = ?';
+                $params[] = $officeId;
             }
-            $presentDays = count($datesPresent);
-            $hoursWorked = $workedMinutes / 60.0;
-
-
-            $gross = $hoursWorked * $hourlyRate;
-            $deductionsTotal = $deductionSum;
+            $sql .= ' ORDER BY al.log_date, al.id';
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            $logRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            if (!empty($logRows)) {
+                $officeName = (string) ($logRows[0]['office_name'] ?? '');
+                $workedMinutes = 0;
+                $deductionSum = 0.0;
+                $datesPresent = [];
+                foreach ($logRows as $row) {
+                    $ld = (string) ($row['log_date'] ?? '');
+                    if ($ld !== '') {
+                        $datesPresent[$ld] = true;
+                    }
+                    $wm = eg_worked_minutes_within_office_hours(
+                        $ld,
+                        $row['time_in'] ?? null,
+                        $row['time_out'] ?? null,
+                        (string) ($row['office_start'] ?? '08:00:00'),
+                        (string) ($row['office_end'] ?? '17:00:00')
+                    );
+                    $fullHours = (int) floor($wm / 60);
+                    $workedMinutes += $fullHours * 60;
+                    $rowDeduction = (float) ($row['deduction_amount'] ?? 0);
+                    $lateMinutes = (int) ($row['late_minutes'] ?? 0);
+                    if ($rowDeduction <= 0 && $deductionPerMinute > 0 && $hasLateMinutesColumn) {
+                        // Removed 60-minute grace period per "deduction per minute" instruction.
+                        $rowDeduction = max(0, $lateMinutes) * $deductionPerMinute;
+                    }
+                    $deductionSum += $rowDeduction;
+                }
+                $presentDays = count($datesPresent);
+                $hoursWorked = $workedMinutes / 60.0;
+                $gross = $hoursWorked * $hourlyRate;
+                $deductionsTotal = $deductionSum;
+            }
         }
     }
 }
@@ -245,8 +235,8 @@ $overtimePay = 0.0;
     $totalConfigurableDeductions = 0.0;
     $payrollDeductionLines = [];
     try {
-        $lastDayOfMonth = date('Y-m-t', strtotime($rangeStart));
-        $isLastWeek = ($rangeStart <= $lastDayOfMonth && $rangeEnd >= $lastDayOfMonth);
+        $lastPayrollDay = eg_last_payroll_day_of_month($weekMonday);
+        $isLastWeek = ($period === 'week' && $weekFriday >= $lastPayrollDay);
         $shouldApplyStatutory = ($period === 'month' || $isLastWeek);
 
         eg_ensure_payroll_deduction_types($pdo);
@@ -286,6 +276,7 @@ $overtimePay = 0.0;
             if (!$isDueThisPeriod) {
                 continue;
             }
+            $amt = (float) ($lr['amount'] ?? 0);
             if ($amt > 0) {
                 $cashAdvanceDeduction += $amt;
             }
@@ -310,7 +301,7 @@ $fmtMoney = static function (float $n): string {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EGoes Solutions</title>
+    <title>E-GOES Solutions</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -463,11 +454,7 @@ $fmtMoney = static function (float $n): string {
                           </tr>
                         <?php endforeach; ?>
                         <tr>
-                          <td><span class="eg-payslip-strike">Tardiness</span></td>
-                          <td class="eg-payslip-num eg-payslip-strike">—</td>
-                        </tr>
-                        <tr>
-                          <td>Late / attendance deductions</td>
+                          <td>Tardiness</td>
                           <td class="eg-payslip-num"><?= $fmtMoney($tardinessAmount) ?></td>
                         </tr>
                         <tr>

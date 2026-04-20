@@ -6,11 +6,22 @@ if (($_SESSION['role'] ?? '') !== 'superadmin') {
 }
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/eg_worked_minutes.php';
 
 function eg_payroll_monday(DateTimeImmutable $d): DateTimeImmutable
 {
     $w = (int) $d->format('N');
     return $d->modify('-' . ($w - 1) . ' days')->setTime(0, 0, 0);
+}
+
+function eg_last_payroll_day_of_month(DateTimeImmutable $dateInMonth): DateTimeImmutable
+{
+    $monthEnd = $dateInMonth->modify('last day of this month')->setTime(0, 0, 0);
+    $weekday = (int) $monthEnd->format('N'); // 1=Mon ... 7=Sun
+    if ($weekday >= 6) {
+        $monthEnd = $monthEnd->modify('-' . ($weekday - 5) . ' days');
+    }
+    return $monthEnd;
 }
 
 $period = trim((string) ($_GET['period'] ?? 'week'));
@@ -47,6 +58,15 @@ if ($period === 'month') {
     $rangeStart = $weekStartStr;
     $rangeEnd = $weekEndStr;
     $periodLabel = $weekMonday->format('M j') . '-' . $weekFriday->format('j, Y');
+}
+
+$lastPayrollDay = eg_last_payroll_day_of_month($weekFriday);
+$defaultShowDeductions = ($period === 'month') || ($period === 'week' && $weekFriday >= $lastPayrollDay);
+$showDeductionsRaw = trim((string) ($_GET['show_deductions'] ?? ''));
+if ($showDeductionsRaw === '1' || $showDeductionsRaw === '0') {
+    $showDeductions = $showDeductionsRaw === '1';
+} else {
+    $showDeductions = $defaultShowDeductions;
 }
 
 $officeFilter = (int) ($_GET['office_id'] ?? 0);
@@ -138,26 +158,15 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
             }
         }
 
-        $workedMinutes = 0;
-        if (!empty($row['time_in']) && !empty($row['time_out'])) {
-            $actualInTs = strtotime((string) $row['time_in']);
-            $actualOutTs = strtotime((string) $row['time_out']);
-            $ld = (string) ($row['log_date'] ?? '');
-            $officeStart = (string) ($row['office_start'] ?? '08:00:00');
-            $officeEnd = (string) ($row['office_end'] ?? '17:00:00');
-            $isGraveyard = substr($officeStart, 0, 5) > substr($officeEnd, 0, 5);
-            $schedInTs = strtotime($ld . ' ' . $officeStart);
-            $schedOutTs = strtotime($ld . ' ' . $officeEnd);
-            if ($isGraveyard) {
-                $schedOutTs = strtotime('+1 day', $schedOutTs);
-            }
-            $effectiveInTs = $schedInTs;
-            $effectiveOutTs = min($actualOutTs, $schedOutTs);
-            if ($effectiveOutTs > $effectiveInTs) {
-                $rawWm = (int) floor(($effectiveOutTs - $effectiveInTs) / 60);
-                $workedMinutes = (int) floor($rawWm / 60) * 60;
-            }
-        }
+        $ld = (string) ($row['log_date'] ?? '');
+        $rawWm = eg_worked_minutes_within_office_hours(
+            $ld,
+            $row['time_in'] ?? null,
+            $row['time_out'] ?? null,
+            (string) ($row['office_start'] ?? '08:00:00'),
+            (string) ($row['office_end'] ?? '17:00:00')
+        );
+        $workedMinutes = (int) floor($rawWm / 60) * 60;
         $employeeOfficeAgg[$key]['worked_minutes'] += $workedMinutes;
         if ($workedMinutes > 0) {
             $logDate = (string) ($row['log_date'] ?? '');
@@ -341,7 +350,7 @@ usort($officeRows, static function (array $a, array $b): int {
 
     <div class="sheet">
       <h1 class="title">PAYROLL SUMMARY REPORT</h1>
-      <p class="subtitle">(<?= htmlspecialchars($periodLabel, ENT_QUOTES, 'UTF-8') ?>)</p>
+      <p class="subtitle">(<?= htmlspecialchars($periodLabel, ENT_QUOTES, 'UTF-8') ?>) · Deductions: <?= $showDeductions ? 'Shown' : 'Hidden' ?></p>
 
       <div class="table-wrap">
         <table>

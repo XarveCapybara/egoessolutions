@@ -9,6 +9,7 @@ $userId = (int) ($_SESSION['user_id'] ?? 0);
 $officeId = (int) ($_SESSION['office_id'] ?? 0);
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/eg_worked_minutes.php';
 
 $employeeId = 0;
 $hourlyRate = 0.0;
@@ -80,33 +81,15 @@ if ($hasAttendanceLogs && $employeeId > 0 && $officeId > 0) {
     $weekRows = $weekStmt->fetchAll();
 
     foreach ($weekRows as $row) {
-        $workedMinutes = 0;
-        if (!empty($row['time_in']) && !empty($row['time_out'])) {
-            $actualInTs = strtotime((string) $row['time_in']);
-            $actualOutTs = strtotime((string) $row['time_out']);
-            $ld = (string) $row['log_date'];
-
-            // Determine office schedule for this log
-            $officeStart = (string) ($row['office_start'] ?? '08:00:00');
-            $officeEnd = (string) ($row['office_end'] ?? '17:00:00');
-            $isGraveyard = substr($officeStart, 0, 5) > substr($officeEnd, 0, 5);
-
-            $schedInTs = strtotime($ld . ' ' . $officeStart);
-            $schedOutTs = strtotime($ld . ' ' . $officeEnd);
-            if ($isGraveyard) {
-                $schedOutTs = strtotime('+1 day', $schedOutTs);
-            }
-
-            // Pay counting starts at office_start
-            $effectiveInTs = $schedInTs;
-            $effectiveOutTs = min($actualOutTs, $schedOutTs);
-
-            if ($effectiveOutTs > $effectiveInTs) {
-                $rawWm = (int) floor(($effectiveOutTs - $effectiveInTs) / 60);
-                // Round down to the nearest full hour as per instruction
-                $workedMinutes = (int) floor($rawWm / 60) * 60;
-            }
-        }
+        $ld = (string) ($row['log_date'] ?? '');
+        $rawWm = eg_worked_minutes_within_office_hours(
+            $ld,
+            $row['time_in'] ?? null,
+            $row['time_out'] ?? null,
+            (string) ($row['office_start'] ?? '08:00:00'),
+            (string) ($row['office_end'] ?? '17:00:00')
+        );
+        $workedMinutes = (int) floor($rawWm / 60) * 60;
         $rowGross = ($workedMinutes / 60) * $hourlyRate;
         $rowDeduction = (float) ($row['deduction_amount'] ?? 0);
         $lateMinutes = (int) ($row['late_minutes'] ?? 0);
@@ -144,7 +127,7 @@ $weeklyNet = $weeklyGross - $weeklyDeductions;
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EGoes Solutions</title>
+    <title>E-GOES Solutions</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet" />

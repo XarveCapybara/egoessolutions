@@ -17,6 +17,10 @@ $currentPage = basename($_SERVER['PHP_SELF'] ?? '');
       <i class="bi bi-calendar2-plus"></i>
       <span>Leave Request</span>
     </a>
+    <a href="cash_advance.php" class="eg-sidebar-link <?= $currentPage === 'cash_advance.php' ? 'active' : '' ?>">
+      <i class="bi bi-cash-coin"></i>
+      <span>Cash Advance</span>
+    </a>
     <a href="memorandum.php" class="eg-sidebar-link <?= $currentPage === 'memorandum.php' ? 'active' : '' ?>">
       <i class="bi bi-file-earmark-text"></i>
       <span>Memorandum</span>

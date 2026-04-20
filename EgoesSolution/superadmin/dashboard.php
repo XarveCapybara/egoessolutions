@@ -7,6 +7,8 @@ if (($_SESSION['role'] ?? '') !== 'superadmin') {
 $name = $_SESSION['display_name'] ?? 'Super Admin';
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/eg_worked_minutes.php';
+require_once __DIR__ . '/../includes/payroll_deduction_types.php';
 
 // --- Metric queries ---
 $totalOffices = (int) $pdo->query('SELECT COUNT(*) FROM offices')->fetchColumn();
@@ -18,7 +20,7 @@ $hasEmployeesTable = $pdo->query("SHOW TABLES LIKE 'employees'")->rowCount() > 0
 $hasAppSettingsTable = $pdo->query("SHOW TABLES LIKE 'app_settings'")->rowCount() > 0;
 $hasCashAdvancesTable = $pdo->query("SHOW TABLES LIKE 'cash_advances'")->rowCount() > 0;
 
-// Attendance today (per-office effective workday, same rules as admin dashboard — graveyard shifts use previous calendar date before shift end time)
+// Attendance today (per-office effective workday — graveyard: same as scan: previous calendar date until 1h after office_end)
 $totalAttendanceToday = 0;
 $presentToday = 0;
 $absentToday = 0;
@@ -53,8 +55,17 @@ if ($hasAttendanceLogs) {
                 $officeTimeInOnly = substr((string) $tin, 0, 8);
                 $officeTimeOutOnly = substr((string) $tout, 0, 8);
                 $isGraveyardShift = $officeTimeInOnly > $officeTimeOutOnly;
-                if ($isGraveyardShift && $nowTime <= $officeTimeOutOnly) {
-                    $effectiveDate = (new DateTimeImmutable('today'))->modify('-1 day')->format('Y-m-d');
+                if ($isGraveyardShift) {
+                    $toSec = static function (string $hhmmss): int {
+                        [$h, $m, $s] = array_map('intval', explode(':', substr($hhmmss, 0, 8)));
+                        return ($h * 3600) + ($m * 60) + $s;
+                    };
+                    $nowSec = $toSec($nowTime);
+                    $outSec = $toSec($officeTimeOutOnly);
+                    $graceEndSec = min($outSec + 3600, 86399);
+                    if ($nowSec <= $graceEndSec) {
+                        $effectiveDate = (new DateTimeImmutable('today'))->modify('-1 day')->format('Y-m-d');
+                    }
                 }
             }
             $presentStmt->execute([$officeIdRow, $effectiveDate]);
@@ -104,34 +115,113 @@ $hasRateAmountColumn = $hasEmployeesTable && $pdo->query("SHOW COLUMNS FROM empl
 if ($hasAttendanceLogs && $hasEmployeesTable) {
     $hasDeductionAmountColumn = $pdo->query("SHOW COLUMNS FROM attendance_logs LIKE 'deduction_amount'")->rowCount() > 0;
     $hasLateMinutesColumn = $pdo->query("SHOW COLUMNS FROM attendance_logs LIKE 'late_minutes'")->rowCount() > 0;
+    $hasOfficeTimeInColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_in'")->rowCount() > 0;
+    $hasOfficeTimeOutColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_out'")->rowCount() > 0;
     $selectDeduction = $hasDeductionAmountColumn ? 'al.deduction_amount' : '0.00 AS deduction_amount';
     $selectLateMinutes = $hasLateMinutesColumn ? 'al.late_minutes' : '0 AS late_minutes';
     $selectRate = $hasRateAmountColumn ? 'e.rate_amount' : 'NULL AS rate_amount';
+    $selectOfficeStart = $hasOfficeTimeInColumn ? 'o.time_in AS office_start' : 'NULL AS office_start';
+    $selectOfficeEnd = $hasOfficeTimeOutColumn ? 'o.time_out AS office_end' : 'NULL AS office_end';
 
     $weekStmt = $pdo->prepare("
-        SELECT al.employee_id, al.time_in, al.time_out, {$selectDeduction}, {$selectLateMinutes}, {$selectRate}
+        SELECT al.employee_id, al.log_date, al.time_in, al.time_out, {$selectDeduction}, {$selectLateMinutes}, {$selectRate}, {$selectOfficeStart}, {$selectOfficeEnd}
         FROM attendance_logs al
         JOIN employees e ON al.employee_id = e.id
+        JOIN offices o ON al.office_id = o.id
         WHERE al.log_date BETWEEN ? AND ?
     ");
     $weekStmt->execute([$weekMonday, $weekFriday]);
-    foreach ($weekStmt->fetchAll() as $row) {
-        $wm = 0;
-        if (!empty($row['time_in']) && !empty($row['time_out'])) {
-            $inTs = strtotime((string) $row['time_in']);
-            $outTs = strtotime((string) $row['time_out']);
-            if ($outTs > $inTs) $wm = (int) floor(($outTs - $inTs) / 60);
-        }
-        $rate = 0.0;
-        $ra = $row['rate_amount'] ?? null;
-        if ($ra !== null && $ra !== '' && (float) $ra > 0) $rate = (float) $ra;
-        if ($rate <= 0) $rate = $defaultHourly;
 
-        $rowGross = ($wm / 60) * $rate;
+    $employeeAgg = [];
+    foreach ($weekStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $eid = (int) ($row['employee_id'] ?? 0);
+        if ($eid <= 0) {
+            continue;
+        }
+        if (!isset($employeeAgg[$eid])) {
+            $employeeAgg[$eid] = [
+                'worked_minutes' => 0,
+                'deductions' => 0.0,
+                'rate_amount' => $row['rate_amount'] ?? null,
+            ];
+        }
+        $ld = (string) ($row['log_date'] ?? '');
+        $rawWm = eg_worked_minutes_within_office_hours(
+            $ld,
+            $row['time_in'] ?? null,
+            $row['time_out'] ?? null,
+            (string) ($row['office_start'] ?? '08:00:00'),
+            (string) ($row['office_end'] ?? '17:00:00')
+        );
+        $workedMinutes = (int) floor($rawWm / 60) * 60;
+        $employeeAgg[$eid]['worked_minutes'] += $workedMinutes;
+
         $rowDed = (float) ($row['deduction_amount'] ?? 0);
         $lateMin = (int) ($row['late_minutes'] ?? 0);
         if ($rowDed <= 0 && $deductionPerMinute > 0 && $hasLateMinutesColumn) {
-            $rowDed = max(0, $lateMin - 60) * $deductionPerMinute;
+            $rowDed = max(0, $lateMin) * $deductionPerMinute;
+        }
+        $employeeAgg[$eid]['deductions'] += $rowDed;
+    }
+
+    if ($hasCashAdvancesTable && !empty($employeeAgg)) {
+        $employeeIds = array_values(array_unique(array_map('intval', array_keys($employeeAgg))));
+        $ph = implode(',', array_fill(0, count($employeeIds), '?'));
+        $loanStmt = $pdo->prepare("
+            SELECT employee_id, amount, advance_date, status
+            FROM cash_advances
+            WHERE employee_id IN ({$ph})
+            ORDER BY advance_date, id
+        ");
+        $loanStmt->execute($employeeIds);
+        foreach ($loanStmt->fetchAll(PDO::FETCH_ASSOC) as $loanRow) {
+            $eid = (int) ($loanRow['employee_id'] ?? 0);
+            if (!isset($employeeAgg[$eid])) {
+                continue;
+            }
+            if ((string) ($loanRow['status'] ?? '') !== 'deducted') {
+                continue;
+            }
+            $ad = (string) ($loanRow['advance_date'] ?? '');
+            if ($ad === '' || $ad < $weekMonday || $ad > $weekFriday) {
+                continue;
+            }
+            $amt = (float) ($loanRow['amount'] ?? 0);
+            if ($amt > 0) {
+                $employeeAgg[$eid]['deductions'] += $amt;
+            }
+        }
+    }
+
+    $configurableDeductionsPerEmployee = 0.0;
+    try {
+        eg_ensure_payroll_deduction_types($pdo);
+        $configurableDeductionsPerEmployee = (float) $pdo->query('SELECT COALESCE(SUM(default_amount), 0) FROM payroll_deduction_types')->fetchColumn();
+    } catch (Throwable $e) {
+        $configurableDeductionsPerEmployee = 0.0;
+    }
+
+    $lastPayrollDay = (new DateTimeImmutable($weekFriday))->modify('last day of this month')->setTime(0, 0, 0);
+    $weekday = (int) $lastPayrollDay->format('N');
+    if ($weekday >= 6) {
+        $lastPayrollDay = $lastPayrollDay->modify('-' . ($weekday - 5) . ' days');
+    }
+    $applyConfigurable = (new DateTimeImmutable($weekFriday)) >= $lastPayrollDay;
+
+    foreach ($employeeAgg as $agg) {
+        $rate = 0.0;
+        $ra = $agg['rate_amount'];
+        if ($ra !== null && $ra !== '' && (float) $ra > 0) {
+            $rate = (float) $ra;
+        }
+        if ($rate <= 0) {
+            $rate = $defaultHourly;
+        }
+        $hours = ((int) ($agg['worked_minutes'] ?? 0)) / 60.0;
+        $rowGross = $hours * $rate;
+        $rowDed = (float) ($agg['deductions'] ?? 0);
+        if ($applyConfigurable) {
+            $rowDed += $configurableDeductionsPerEmployee;
         }
         $weeklyGross += $rowGross;
         $weeklyDeductions += $rowDed;
@@ -183,7 +273,7 @@ $weekLabel = (new DateTimeImmutable('monday this week'))->format('M j') . ' – 
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EGoes Solutions</title>
+    <title>E-GOES Solutions</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet" />

@@ -30,6 +30,12 @@ if (empty($_SESSION['_eg_cash_advances_migrated'])) {
                 $pdo->exec("ALTER TABLE cash_advances DROP COLUMN {$legacyCol}");
             }
         }
+        if ($pdo->query("SHOW COLUMNS FROM cash_advances LIKE 'requested_by_user_id'")->rowCount() === 0) {
+            $pdo->exec('ALTER TABLE cash_advances ADD COLUMN requested_by_user_id INT NULL AFTER employee_id');
+        }
+        if ($pdo->query("SHOW COLUMNS FROM cash_advances LIKE 'request_source'")->rowCount() === 0) {
+            $pdo->exec('ALTER TABLE cash_advances ADD COLUMN request_source VARCHAR(20) NULL AFTER requested_by_user_id');
+        }
         // One-time status cleanup
         $pdo->exec("UPDATE cash_advances SET status = 'pending' WHERE status = 'accredited'");
     } catch (Throwable $e) {
@@ -112,7 +118,9 @@ $employees = $pdo->query('
     ORDER BY u.full_name
 ')->fetchAll(PDO::FETCH_ASSOC);
 
-$cashAdvances = $pdo->query('
+$selectedEmployeeId = (int) ($_GET['employee_filter_id'] ?? 0);
+
+$cashAdvancesSql = '
     SELECT
       ca.id,
       ca.employee_id,
@@ -121,6 +129,7 @@ $cashAdvances = $pdo->query('
       ca.advance_date,
       ca.status,
       ca.created_at,
+      ca.request_source,
       u.full_name,
       e.employee_code,
       o.name AS office_name
@@ -128,6 +137,13 @@ $cashAdvances = $pdo->query('
     JOIN employees e ON e.id = ca.employee_id
     JOIN users u ON u.id = e.user_id
     LEFT JOIN offices o ON o.id = u.office_id
+';
+$cashAdvancesParams = [];
+if ($selectedEmployeeId > 0) {
+    $cashAdvancesSql .= ' WHERE ca.employee_id = ? ';
+    $cashAdvancesParams[] = $selectedEmployeeId;
+}
+$cashAdvancesSql .= '
     ORDER BY
       CASE ca.status
         WHEN "pending" THEN 0
@@ -136,14 +152,17 @@ $cashAdvances = $pdo->query('
       ca.advance_date DESC,
       ca.id DESC
     LIMIT 200
-')->fetchAll(PDO::FETCH_ASSOC);
+';
+$cashAdvancesStmt = $pdo->prepare($cashAdvancesSql);
+$cashAdvancesStmt->execute($cashAdvancesParams);
+$cashAdvances = $cashAdvancesStmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EGoes Solutions</title>
+    <title>E-GOES Solutions</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -224,6 +243,26 @@ $cashAdvances = $pdo->query('
 
           <div class="eg-panel p-3">
             <h5 class="mb-3">Cash Advance Records</h5>
+            <form method="get" class="row g-2 align-items-end mb-3">
+              <div class="col-12 col-md-5 col-lg-4">
+                <label class="form-label" for="employee_filter_id">Filter by employee</label>
+                <select class="form-select" id="employee_filter_id" name="employee_filter_id">
+                  <option value="">All employees</option>
+                  <?php foreach ($employees as $emp): ?>
+                    <?php $filterEmployeeId = (int) $emp['employee_id']; ?>
+                    <option
+                      value="<?= $filterEmployeeId ?>"
+                      <?= $selectedEmployeeId === $filterEmployeeId ? 'selected' : '' ?>
+                    >
+                      <?= htmlspecialchars($emp['display_name']) ?>
+                    </option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+              <div class="col-auto">
+                <a class="btn btn-outline-secondary" href="loans.php">Reset</a>
+              </div>
+            </form>
             <div class="table-responsive">
               <table class="table table-sm align-middle mb-0">
                 <thead class="table-light">
@@ -232,6 +271,7 @@ $cashAdvances = $pdo->query('
                     <th>Employee</th>
                     <th>Code</th>
                     <th>Office</th>
+                    <th>Requested Via</th>
                     <th class="text-end">Amount</th>
                     <th>Status</th>
                     <th>Deducted In</th>
@@ -241,7 +281,7 @@ $cashAdvances = $pdo->query('
                 </thead>
                 <tbody>
                   <?php if (empty($cashAdvances)): ?>
-                    <tr><td colspan="9" class="text-center text-muted py-3">No cash advances yet.</td></tr>
+                    <tr><td colspan="10" class="text-center text-muted py-3">No cash advances yet.</td></tr>
                   <?php else: ?>
                     <?php foreach ($cashAdvances as $ca): ?>
                       <?php
@@ -253,6 +293,15 @@ $cashAdvances = $pdo->query('
                         <td><?= htmlspecialchars((string) $ca['full_name']) ?></td>
                         <td><?= htmlspecialchars((string) ($ca['employee_code'] ?? '—')) ?></td>
                         <td><?= htmlspecialchars((string) ($ca['office_name'] ?? '—')) ?></td>
+                        <td>
+                          <?php
+                          $reqSource = strtolower(trim((string) ($ca['request_source'] ?? '')));
+                          if ($reqSource === '') {
+                              $reqSource = 'superadmin';
+                          }
+                          ?>
+                          <?= htmlspecialchars(ucfirst($reqSource)) ?>
+                        </td>
                         <td class="text-end"><?= number_format((float) $ca['amount'], 2) ?></td>
                         <td>
                           <span class="badge <?= $pending ? 'text-bg-warning' : 'text-bg-success' ?>">
@@ -351,6 +400,15 @@ $cashAdvances = $pdo->query('
             }
             event.preventDefault();
             openConfirm('Save this cash advance entry?', addForm);
+          });
+        }
+
+        var employeeFilter = document.getElementById('employee_filter_id');
+        if (employeeFilter) {
+          employeeFilter.addEventListener('change', function () {
+            var filterForm = employeeFilter.closest('form');
+            if (!filterForm) return;
+            filterForm.submit();
           });
         }
 

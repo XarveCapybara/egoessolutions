@@ -187,8 +187,17 @@ try {
         $outSec = $toSeconds($officeTimeOutOnly);
         $allowedStartSec = ($inSec - 3600 + 86400) % 86400;
 
-        if ($isGraveyardShift && $nowSec <= $outSec) {
-            $shiftBaseDate = $now->modify('-1 day')->format('Y-m-d');
+        // Graveyard log_date = calendar day of shift start (evening). After office_end the clock date jumps
+        // to "today" but rows are still under yesterday — allow 1 hour after office_end to resolve that shift.
+        $graveyardGraceEndSec = min($outSec + 3600, 86399);
+        if ($isGraveyardShift) {
+            if ($nowSec <= $outSec) {
+                $shiftBaseDate = $now->modify('-1 day')->format('Y-m-d');
+            } elseif ($nowSec > $outSec && $nowSec <= $graveyardGraceEndSec) {
+                $shiftBaseDate = $now->modify('-1 day')->format('Y-m-d');
+            } else {
+                $shiftBaseDate = $now->format('Y-m-d');
+            }
         } else {
             $shiftBaseDate = $now->format('Y-m-d');
         }
@@ -199,6 +208,11 @@ try {
         } else {
             $withinAllowedWindow = ($nowSec >= $allowedStartSec) && ($nowSec <= $outSec);
         }
+        // Individual time-out during 1h after office_end (same window as bulk) for graveyard
+        $graveyardOutGrace = $isGraveyardShift
+            && $scanType === 'out'
+            && $nowSec > $outSec
+            && $nowSec <= $graveyardGraceEndSec;
 
         // Bulk time-out window:
         // - Normal shift: from 1 hour before time-in until 1 hour after time-out.
@@ -221,7 +235,7 @@ try {
         }
         $effectiveLogDate = $scheduledTimeInAt->format('Y-m-d');
 
-        if (!$withinAllowedWindow && !$isBulkTimeout) {
+        if (!$withinAllowedWindow && !$graveyardOutGrace && !$isBulkTimeout) {
             if ($scanType === 'in') {
                 $_SESSION['scan_status'] = 'error';
                 $_SESSION['scan_message'] = 'Time-in is only allowed within 1 hour before shift start and before scheduled time-out.';

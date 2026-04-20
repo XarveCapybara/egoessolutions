@@ -7,6 +7,7 @@ if (($_SESSION['role'] ?? '') !== 'admin') {
 $name = $_SESSION['display_name'] ?? 'Admin';
 $officeId = $_SESSION['office_id'] ?? null;
 $designatedOfficeName = 'Unassigned';
+$designatedOfficeAddress = '';
 $designatedOfficeTimeRange = 'Not set';
 
 require_once __DIR__ . '/../config/database.php';
@@ -20,24 +21,44 @@ $effectiveWorkdayDate = date('Y-m-d');
 $isGraveyardShift = false;
 $withinWorkHours = false;
 if ($officeId) {
+    $hasOfficeAddressColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'address'")->rowCount() > 0;
     $hasOfficeTimeInColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_in'")->rowCount() > 0;
     $hasOfficeTimeOutColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_out'")->rowCount() > 0;
+    $selectAddress = $hasOfficeAddressColumn ? 'address' : 'NULL AS address';
     $selectTimeIn = $hasOfficeTimeInColumn ? 'time_in' : 'NULL AS time_in';
     $selectTimeOut = $hasOfficeTimeOutColumn ? 'time_out' : 'NULL AS time_out';
-    $officeStmt = $pdo->prepare("SELECT name, {$selectTimeIn}, {$selectTimeOut} FROM offices WHERE id = ? LIMIT 1");
+    $officeStmt = $pdo->prepare("SELECT name, {$selectAddress}, {$selectTimeIn}, {$selectTimeOut} FROM offices WHERE id = ? LIMIT 1");
     $officeStmt->execute([$officeId]);
     $officeRow = $officeStmt->fetch();
     if ($officeRow) {
         if (!empty($officeRow['name'])) {
             $designatedOfficeName = (string) $officeRow['name'];
         }
+        if (!empty($officeRow['address'])) {
+            $addr = trim((string) $officeRow['address']);
+            if ($addr !== '') {
+                $designatedOfficeAddress = function_exists('mb_strlen') && mb_strlen($addr) > 120
+                    ? mb_substr($addr, 0, 117) . '…'
+                    : (strlen($addr) > 120 ? substr($addr, 0, 117) . '…' : $addr);
+            }
+        }
         if (!empty($officeRow['time_in']) && !empty($officeRow['time_out'])) {
             $designatedOfficeTimeRange = date('h:i A', strtotime($officeRow['time_in'])) . ' - ' . date('h:i A', strtotime($officeRow['time_out']));
             $officeTimeInOnly = substr((string) $officeRow['time_in'], 0, 8);
             $officeTimeOutOnly = substr((string) $officeRow['time_out'], 0, 8);
             $isGraveyardShift = $officeTimeInOnly > $officeTimeOutOnly;
-            if ($isGraveyardShift && date('H:i:s') <= $officeTimeOutOnly) {
-                $effectiveWorkdayDate = date('Y-m-d', strtotime('-1 day'));
+            // Match attendance scan: graveyard log_date is shift-start day until 1 hour after office_end.
+            if ($isGraveyardShift) {
+                $toSec = static function (string $hhmmss): int {
+                    [$h, $m, $s] = array_map('intval', explode(':', substr($hhmmss, 0, 8)));
+                    return ($h * 3600) + ($m * 60) + $s;
+                };
+                $nowSec = $toSec(date('H:i:s'));
+                $outSec = $toSec($officeTimeOutOnly);
+                $graceEndSec = min($outSec + 3600, 86399);
+                if ($nowSec <= $graceEndSec) {
+                    $effectiveWorkdayDate = date('Y-m-d', strtotime('-1 day'));
+                }
             }
             // Determine if we are still within today's working hours based on time-of-day.
             $nowTime = date('H:i:s');
@@ -165,7 +186,7 @@ if ($officeId) {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EGoes Solutions</title>
+    <title>E-GOES Solutions</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -177,6 +198,15 @@ if ($officeId) {
     />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" />
     <link rel="stylesheet" href="../assets/css/style.css?v=blue1" />
+    <style>
+      .eg-dashboard-clock-time {
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.02em;
+      }
+      .eg-dashboard-clock-date {
+        margin-top: 0.25rem;
+      }
+    </style>
   </head>
   <body class="bg-light">
     <?php include __DIR__ . '/../includes/header.php'; ?>
@@ -192,14 +222,24 @@ if ($officeId) {
             Overview of your office dashboard and employee activity.
           </p>
           <div class="eg-panel p-3 mb-4 border border-primary-subtle">
-            <div class="row g-3 align-items-center">
-              <div class="col-md-6">
+            <div class="row g-3 align-items-start">
+              <div class="col-12 col-md-4">
                 <div class="text-muted small text-uppercase fw-semibold">Designated Office</div>
                 <div class="fw-bold fs-5 text-primary"><?= htmlspecialchars($designatedOfficeName) ?></div>
+                <?php if ($designatedOfficeAddress !== ''): ?>
+                  <div class="small text-muted mt-1"><?= htmlspecialchars($designatedOfficeAddress) ?></div>
+                <?php endif; ?>
               </div>
-              <div class="col-md-6">
+              <div class="col-12 col-md-4">
                 <div class="text-muted small text-uppercase fw-semibold">Working Time</div>
                 <div class="fw-bold fs-5"><?= htmlspecialchars($designatedOfficeTimeRange) ?></div>
+              </div>
+              <div class="col-12 col-md-4">
+                <div class="text-muted small text-uppercase fw-semibold">
+                  <i class="bi bi-clock" aria-hidden="true"></i> Current time
+                </div>
+                <div class="fw-bold fs-5 eg-dashboard-clock-time" id="egAdminLiveClockTime">—</div>
+                <div class="eg-dashboard-clock-date small text-muted" id="egAdminLiveClockDate" aria-live="polite"></div>
               </div>
             </div>
           </div>
@@ -306,6 +346,32 @@ if ($officeId) {
       integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
       crossorigin="anonymous"
     ></script>
+    <script>
+      (function () {
+        var elTime = document.getElementById('egAdminLiveClockTime');
+        var elDate = document.getElementById('egAdminLiveClockDate');
+        if (!elTime) return;
+        function tick() {
+          var now = new Date();
+          elTime.textContent = now.toLocaleTimeString(undefined, {
+            hour: 'numeric',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+          });
+          if (elDate) {
+            elDate.textContent = now.toLocaleDateString(undefined, {
+              weekday: 'long',
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric'
+            });
+          }
+        }
+        tick();
+        setInterval(tick, 1000);
+      })();
+    </script>
     <?php include __DIR__ . '/../includes/footer.php'; ?>
   </body>
 </html>

@@ -10,8 +10,9 @@ require_once __DIR__ . '/../config/database.php';
 $name = $_SESSION['display_name'] ?? 'Admin';
 $adminUserId = (int) ($_SESSION['user_id'] ?? 0);
 $officeId = (int) ($_SESSION['office_id'] ?? 0);
-$error = null;
-$message = null;
+$error = $_SESSION['memo_flash_error'] ?? null;
+$message = $_SESSION['memo_flash_message'] ?? null;
+unset($_SESSION['memo_flash_error'], $_SESSION['memo_flash_message']);
 
 function eg_detect_consequence_type(string $text): string
 {
@@ -68,6 +69,14 @@ function eg_render_letter_template(string $subjectTemplate, string $bodyTemplate
     }
 
     return ($subject !== '' ? $subject : 'Subject: Memorandum Notice') . "\n\n" . ($body !== '' ? $body : '');
+}
+
+function eg_memo_redirect_self(): void
+{
+    $query = $_SERVER['QUERY_STRING'] ?? '';
+    $target = 'memorandum.php' . ($query !== '' ? ('?' . $query) : '');
+    header('Location: ' . $target);
+    exit;
 }
 
 try {
@@ -313,7 +322,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $error === null) {
                             $memoStatus,
                         ]);
 
-                        $message = 'Memorandum issued successfully.';
+                        $_SESSION['memo_flash_message'] = 'Memorandum issued successfully.';
+                        eg_memo_redirect_self();
                     }
                 }
             } catch (Throwable $e) {
@@ -326,7 +336,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $error === null) {
             try {
                 $resolveStmt = $pdo->prepare('UPDATE employee_memos SET status = "resolved" WHERE id = ? AND office_id = ?');
                 $resolveStmt->execute([$memoId, $officeId]);
-                $message = 'Memo status updated.';
+                $_SESSION['memo_flash_message'] = 'Memo status updated.';
+                eg_memo_redirect_self();
             } catch (Throwable $e) {
                 $error = 'Unable to update memo status.';
             }
@@ -400,7 +411,7 @@ if ($officeId > 0 && $error === null) {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EGoes Solutions</title>
+    <title>E-GOES Solutions</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet" />

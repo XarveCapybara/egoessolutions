@@ -29,13 +29,13 @@ $currentPage = basename($_SERVER['PHP_SELF'] ?? '');
       <i class="bi bi-cash-coin"></i>
       <span>Cash Advances</span>
     </a>
-    <a href="barcodes.php" class="eg-sidebar-link <?= $currentPage === 'barcodes.php' ? 'active' : '' ?>">
-      <i class="bi bi-upc-scan"></i>
-      <span>Employee Barcodes</span>
-    </a>
     <a href="attendance.php" class="eg-sidebar-link <?= $currentPage === 'attendance.php' ? 'active' : '' ?>">
       <i class="bi bi-calendar-check"></i>
       <span>Office Attendance</span>
+    </a>
+    <a href="barcodes.php" class="eg-sidebar-link <?= $currentPage === 'barcodes.php' ? 'active' : '' ?>">
+      <i class="bi bi-upc-scan"></i>
+      <span>Employee Barcodes</span>
     </a>
     <a href="memos.php" class="eg-sidebar-link <?= $currentPage === 'memos.php' ? 'active' : '' ?>">
       <i class="bi bi-journal-text"></i>

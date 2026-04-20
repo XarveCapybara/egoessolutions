@@ -10,6 +10,16 @@ $officeId = (int) ($_SESSION['office_id'] ?? 0);
 
 require_once __DIR__ . '/../config/database.php';
 
+if ($userId > 0) {
+    $officeFromUser = $pdo->prepare('SELECT office_id FROM users WHERE id = ? LIMIT 1');
+    $officeFromUser->execute([$userId]);
+    $dbOfficeId = (int) ($officeFromUser->fetchColumn() ?: 0);
+    if ($dbOfficeId > 0) {
+        $officeId = $dbOfficeId;
+    }
+}
+require_once __DIR__ . '/../includes/eg_worked_minutes.php';
+
 $monthParam = trim($_GET['month'] ?? '');
 if ($monthParam !== '' && preg_match('/^\d{4}-\d{2}$/', $monthParam)) {
     $monthStart = DateTimeImmutable::createFromFormat('Y-m-d', $monthParam . '-01') ?: new DateTimeImmutable('first day of this month');
@@ -19,15 +29,18 @@ if ($monthParam !== '' && preg_match('/^\d{4}-\d{2}$/', $monthParam)) {
 $monthStart = $monthStart->setTime(0, 0, 0);
 $monthEnd = $monthStart->modify('last day of this month');
 $today = new DateTimeImmutable('today');
+$calendarTodayYmd = $today->format('Y-m-d');
 $monthLabel = $monthStart->format('F Y');
 $currentMonthKey = $monthStart->format('Y-m');
 $prevMonthKey = $monthStart->modify('-1 month')->format('Y-m');
 $nextMonthKey = $monthStart->modify('+1 month')->format('Y-m');
 $daysInMonth = (int) $monthStart->format('t');
-$firstWeekday = (int) $monthStart->format('w'); // 0=Sun, 6=Sat
+// Monday-first grid (ISO weekday N: Mon=1 … Sun=7)
+$firstWeekday = (int) $monthStart->format('N') - 1;
 $lateThreshold = '09:00:00';
 $attendanceByDate = [];
 $attendanceDetailsByDate = [];
+$suspendedDates = [];
 $employeeId = 0;
 $hasEmployeesTable = $pdo->query("SHOW TABLES LIKE 'employees'")->rowCount() > 0;
 $hasAttendanceLogs = $pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount() > 0;
@@ -38,16 +51,49 @@ $weeklyGross = 0.0;
 $weeklyDeductions = 0.0;
 $weeklyNet = 0.0;
 $weekStart = (new DateTimeImmutable('monday this week'))->format('Y-m-d');
-$weekEnd = (new DateTimeImmutable('sunday this week'))->format('Y-m-d');
+$weekEnd = (new DateTimeImmutable('friday this week'))->format('Y-m-d');
+
+$assignedOfficeName = 'Not assigned';
+$assignedOfficeAddress = '';
+$assignedOfficeTimeRange = 'Not set';
 
 if ($officeId > 0) {
+    $hasOfficeNameColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'name'")->rowCount() > 0;
+    $hasOfficeAddressColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'address'")->rowCount() > 0;
     $hasOfficeTimeInColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_in'")->rowCount() > 0;
-    if ($hasOfficeTimeInColumn) {
-        $officeStmt = $pdo->prepare('SELECT time_in FROM offices WHERE id = ? LIMIT 1');
-        $officeStmt->execute([$officeId]);
-        $officeTimeIn = $officeStmt->fetchColumn();
-        if ($officeTimeIn) {
+    $hasOfficeTimeOutColumn = $pdo->query("SHOW COLUMNS FROM offices LIKE 'time_out'")->rowCount() > 0;
+    $selectName = $hasOfficeNameColumn ? 'name' : 'NULL AS name';
+    $selectAddress = $hasOfficeAddressColumn ? 'address' : 'NULL AS address';
+    $selectTimeIn = $hasOfficeTimeInColumn ? 'time_in' : 'NULL AS time_in';
+    $selectTimeOut = $hasOfficeTimeOutColumn ? 'time_out' : 'NULL AS time_out';
+    $officeStmt = $pdo->prepare("SELECT {$selectName}, {$selectAddress}, {$selectTimeIn}, {$selectTimeOut} FROM offices WHERE id = ? LIMIT 1");
+    $officeStmt->execute([$officeId]);
+    $officeRow = $officeStmt->fetch(PDO::FETCH_ASSOC);
+    if ($officeRow) {
+        if (!empty($officeRow['name'])) {
+            $assignedOfficeName = (string) $officeRow['name'];
+        }
+        if (!empty($officeRow['address'])) {
+            $addr = trim((string) $officeRow['address']);
+            if ($addr !== '') {
+                $assignedOfficeAddress = function_exists('mb_strlen') && mb_strlen($addr) > 120
+                    ? mb_substr($addr, 0, 117) . '…'
+                    : (strlen($addr) > 120 ? substr($addr, 0, 117) . '…' : $addr);
+            }
+        }
+        $officeTimeIn = $officeRow['time_in'] ?? null;
+        $officeTimeOut = $officeRow['time_out'] ?? null;
+        if (!empty($officeTimeIn)) {
             $lateThreshold = substr((string) $officeTimeIn, 0, 8);
+        }
+        if (!empty($officeTimeIn) && !empty($officeTimeOut)) {
+            $assignedOfficeTimeRange = date('h:i A', strtotime((string) $officeTimeIn))
+                . ' – '
+                . date('h:i A', strtotime((string) $officeTimeOut));
+        } elseif (!empty($officeTimeIn)) {
+            $assignedOfficeTimeRange = 'From ' . date('h:i A', strtotime((string) $officeTimeIn));
+        } elseif (!empty($officeTimeOut)) {
+            $assignedOfficeTimeRange = 'Until ' . date('h:i A', strtotime((string) $officeTimeOut));
         }
     }
 }
@@ -95,24 +141,31 @@ if ($hasAppSettingsTable) {
 if ($hasAttendanceLogs && $employeeId > 0) {
     $hasDeductionAmountColumn = $pdo->query("SHOW COLUMNS FROM attendance_logs LIKE 'deduction_amount'")->rowCount() > 0;
     $hasLateMinutesColumn = $pdo->query("SHOW COLUMNS FROM attendance_logs LIKE 'late_minutes'")->rowCount() > 0;
-    $selectDeduction = $hasDeductionAmountColumn ? 'deduction_amount' : '0.00 AS deduction_amount';
-    $selectLateMinutes = $hasLateMinutesColumn ? 'late_minutes' : '0 AS late_minutes';
+    $selectDeduction = $hasDeductionAmountColumn ? 'al.deduction_amount' : '0.00 AS deduction_amount';
+    $selectLateMinutes = $hasLateMinutesColumn ? 'al.late_minutes' : '0 AS late_minutes';
 
     $weekStmt = $pdo->prepare("
-        SELECT time_in, time_out, {$selectDeduction}, {$selectLateMinutes}
-        FROM attendance_logs
-        WHERE employee_id = ? AND office_id = ? AND log_date BETWEEN ? AND ?
+        SELECT
+            al.log_date,
+            al.time_in,
+            al.time_out,
+            {$selectDeduction},
+            {$selectLateMinutes},
+            o.time_in AS office_start,
+            o.time_out AS office_end
+        FROM attendance_logs al
+        LEFT JOIN offices o ON o.id = al.office_id
+        WHERE al.employee_id = ? AND al.office_id = ? AND al.log_date BETWEEN ? AND ?
     ");
     $weekStmt->execute([$employeeId, $officeId, $weekStart, $weekEnd]);
     foreach ($weekStmt->fetchAll() as $row) {
-        $workedMinutes = 0;
-        if (!empty($row['time_in']) && !empty($row['time_out'])) {
-            $inTs = strtotime((string) $row['time_in']);
-            $outTs = strtotime((string) $row['time_out']);
-            if ($outTs > $inTs) {
-                $workedMinutes = (int) floor(($outTs - $inTs) / 60);
-            }
-        }
+        $workedMinutes = eg_worked_minutes_within_office_hours(
+            (string) ($row['log_date'] ?? ''),
+            $row['time_in'] ?? null,
+            $row['time_out'] ?? null,
+            $row['office_start'] ?? null,
+            $row['office_end'] ?? null
+        );
         $weeklyGross += ($workedMinutes / 60) * $hourlyRate;
         $rowDeduction = (float) ($row['deduction_amount'] ?? 0);
         if ($rowDeduction <= 0 && $deductionPerMinute > 0) {
@@ -124,23 +177,30 @@ if ($hasAttendanceLogs && $employeeId > 0) {
     $weeklyNet = $weeklyGross - $weeklyDeductions;
 
     $logsStmt = $pdo->prepare("
-        SELECT log_date, time_in, time_out, {$selectDeduction}, {$selectLateMinutes}
-        FROM attendance_logs
-        WHERE employee_id = ? AND office_id = ? AND log_date BETWEEN ? AND ?
-        ORDER BY log_date DESC, id DESC
+        SELECT
+            al.log_date,
+            al.time_in,
+            al.time_out,
+            {$selectDeduction},
+            {$selectLateMinutes},
+            o.time_in AS office_start,
+            o.time_out AS office_end
+        FROM attendance_logs al
+        LEFT JOIN offices o ON o.id = al.office_id
+        WHERE al.employee_id = ? AND al.office_id = ? AND al.log_date BETWEEN ? AND ?
+        ORDER BY al.log_date DESC, al.id DESC
     ");
     $logsStmt->execute([$employeeId, $officeId, $monthStart->format('Y-m-d'), $monthEnd->format('Y-m-d')]);
     foreach ($logsStmt->fetchAll() as $row) {
         $dateKey = (string) $row['log_date'];
         if (!isset($attendanceByDate[$dateKey])) {
-            $workedMinutes = 0;
-            if (!empty($row['time_in']) && !empty($row['time_out'])) {
-                $inTs = strtotime((string) $row['time_in']);
-                $outTs = strtotime((string) $row['time_out']);
-                if ($outTs > $inTs) {
-                    $workedMinutes = (int) floor(($outTs - $inTs) / 60);
-                }
-            }
+            $workedMinutes = eg_worked_minutes_within_office_hours(
+                $dateKey,
+                $row['time_in'] ?? null,
+                $row['time_out'] ?? null,
+                $row['office_start'] ?? null,
+                $row['office_end'] ?? null
+            );
             $lateMinutes = (int) ($row['late_minutes'] ?? 0);
             $rowDeduction = (float) ($row['deduction_amount'] ?? 0);
             if ($rowDeduction <= 0 && $deductionPerMinute > 0) {
@@ -158,6 +218,47 @@ if ($hasAttendanceLogs && $employeeId > 0) {
     }
 }
 
+$hasEmployeeMemosTable = $pdo->query("SHOW TABLES LIKE 'employee_memos'")->rowCount() > 0;
+if ($hasEmployeeMemosTable && $userId > 0) {
+    try {
+        $suspendStmt = $pdo->prepare("
+            SELECT suspension_start, suspension_end
+            FROM employee_memos
+            WHERE user_id = ?
+              AND status = 'active'
+              AND LOWER(consequence_type) = 'suspension'
+              AND suspension_start IS NOT NULL
+              AND suspension_end IS NOT NULL
+              AND suspension_end >= ?
+              AND suspension_start <= ?
+            ORDER BY suspension_start ASC, id ASC
+        ");
+        $suspendStmt->execute([$userId, $monthStart->format('Y-m-d'), $monthEnd->format('Y-m-d')]);
+        foreach ($suspendStmt->fetchAll(PDO::FETCH_ASSOC) as $sr) {
+            $rangeStart = DateTimeImmutable::createFromFormat('Y-m-d', (string) ($sr['suspension_start'] ?? ''));
+            $rangeEnd = DateTimeImmutable::createFromFormat('Y-m-d', (string) ($sr['suspension_end'] ?? ''));
+            if (!$rangeStart || !$rangeEnd || $rangeEnd < $rangeStart) {
+                continue;
+            }
+            if ($rangeStart < $monthStart) {
+                $rangeStart = $monthStart;
+            }
+            if ($rangeEnd > $monthEnd) {
+                $rangeEnd = $monthEnd;
+            }
+            for ($d = $rangeStart; $d <= $rangeEnd; $d = $d->modify('+1 day')) {
+                $key = $d->format('Y-m-d');
+                $suspendedDates[$key] = [
+                    'start' => $rangeStart->format('Y-m-d'),
+                    'end' => $rangeEnd->format('Y-m-d'),
+                ];
+            }
+        }
+    } catch (Throwable $e) {
+        // Keep dashboard working even if memo query fails.
+    }
+}
+
 $calendarCells = [];
 for ($i = 0; $i < $firstWeekday; $i++) {
     $calendarCells[] = null;
@@ -165,11 +266,15 @@ for ($i = 0; $i < $firstWeekday; $i++) {
 for ($day = 1; $day <= $daysInMonth; $day++) {
     $dateObj = $monthStart->setDate((int) $monthStart->format('Y'), (int) $monthStart->format('m'), $day);
     $dateKey = $dateObj->format('Y-m-d');
+    $dayAttendance = $attendanceByDate[$dateKey] ?? null;
     $status = null;
     $statusClass = '';
-    if ($dateObj <= $today) {
-        if (!empty($attendanceByDate[$dateKey]) && !empty($attendanceByDate[$dateKey]['time_in'])) {
-            $timeInOnly = date('H:i:s', strtotime((string) $attendanceByDate[$dateKey]['time_in']));
+    if (isset($suspendedDates[$dateKey])) {
+        $status = 'Suspended';
+        $statusClass = 'eg-dot-yellow';
+    } elseif ($dateObj <= $today) {
+        if (!empty($dayAttendance) && !empty($dayAttendance['time_in'])) {
+            $timeInOnly = date('H:i:s', strtotime((string) $dayAttendance['time_in']));
             if ($timeInOnly > $lateThreshold) {
                 $status = 'Late';
                 $statusClass = 'eg-dot-red';
@@ -187,13 +292,14 @@ for ($day = 1; $day <= $daysInMonth; $day++) {
         'date' => $dateKey,
         'status' => $status,
         'status_class' => $statusClass,
-        'is_today' => $dateKey === $today->format('Y-m-d'),
+        'is_today' => $dateKey === $calendarTodayYmd,
     ];
-    $dayAttendance = $attendanceByDate[$dateKey] ?? null;
     $attendanceDetailsByDate[$dateKey] = [
         'date' => $dateKey,
         'date_label' => $dateObj->format('M j, Y'),
         'status' => $status ?? ($dateObj > $today ? 'Future' : 'Absent'),
+        'suspension_start' => $suspendedDates[$dateKey]['start'] ?? null,
+        'suspension_end' => $suspendedDates[$dateKey]['end'] ?? null,
         'time_in' => $dayAttendance['time_in'] ?? null,
         'time_out' => $dayAttendance['time_out'] ?? null,
         'late_minutes' => (int) ($dayAttendance['late_minutes'] ?? 0),
@@ -215,7 +321,7 @@ $attendanceDetailsJson = json_encode(
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EGoes Solutions</title>
+    <title>E-GOES Solutions</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -303,6 +409,13 @@ $attendanceDetailsJson = json_encode(
           font-size: 0.65rem;
         }
       }
+      .eg-dashboard-clock-time {
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.02em;
+      }
+      .eg-dashboard-clock-date {
+        margin-top: 0.25rem;
+      }
     </style>
   </head>
   <body class="bg-light">
@@ -312,11 +425,34 @@ $attendanceDetailsJson = json_encode(
       <div class="row">
         <?php include __DIR__ . '/../includes/sidebar_employee.php'; ?>
         <main class="col-12 col-md-9 col-lg-10 py-4">
+      <div class="eg-panel p-3 mb-3 border border-primary-subtle">
+        <div class="row g-3 align-items-start">
+          <div class="col-12 col-md-4">
+            <div class="text-muted small text-uppercase fw-semibold">Your office</div>
+            <div class="fw-bold fs-5 text-primary"><?= htmlspecialchars($assignedOfficeName) ?></div>
+            <?php if ($assignedOfficeAddress !== ''): ?>
+              <div class="small text-muted mt-1"><?= htmlspecialchars($assignedOfficeAddress) ?></div>
+            <?php endif; ?>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="text-muted small text-uppercase fw-semibold">Office hours</div>
+            <div class="fw-bold fs-5"><?= htmlspecialchars($assignedOfficeTimeRange) ?></div>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="text-muted small text-uppercase fw-semibold">
+              <i class="bi bi-clock" aria-hidden="true"></i> Current time
+            </div>
+            <div class="fw-bold fs-5 eg-dashboard-clock-time" id="egLiveClockTime">—</div>
+            <div class="eg-dashboard-clock-date small text-muted" id="egLiveClockDate" aria-live="polite"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="row g-3">
         <div class="col-lg-4">
           <div class="eg-panel">
             <h5 class="mb-3">My Earnings</h5>
-            <p class="text-muted small mb-3">Current week: <?= htmlspecialchars(date('M d', strtotime($weekStart))) ?> - <?= htmlspecialchars(date('M d, Y', strtotime($weekEnd))) ?></p>
+            <p class="text-muted small mb-3">Current week (Mon&ndash;Fri): <?= htmlspecialchars(date('M d', strtotime($weekStart))) ?> &ndash; <?= htmlspecialchars(date('M d, Y', strtotime($weekEnd))) ?></p>
             <div class="d-flex justify-content-between align-items-center mb-2">
               <span class="text-muted small">Hourly Rate</span>
               <span class="fw-semibold"><?= number_format($hourlyRate, 2) ?></span>
@@ -364,17 +500,18 @@ $attendanceDetailsJson = json_encode(
             <div class="d-flex align-items-center gap-3 small mb-3">
               <span><span class="eg-dot eg-dot-green me-1"></span>Present</span>
               <span><span class="eg-dot eg-dot-red me-1"></span>Late</span>
+              <span><span class="eg-dot eg-dot-yellow me-1"></span>Suspended</span>
               <span><span class="eg-dot eg-dot-gray me-1"></span>Absent</span>
             </div>
 
             <div class="eg-calendar-grid mb-2">
-              <div class="eg-calendar-head">Sun</div>
               <div class="eg-calendar-head">Mon</div>
               <div class="eg-calendar-head">Tue</div>
               <div class="eg-calendar-head">Wed</div>
               <div class="eg-calendar-head">Thu</div>
               <div class="eg-calendar-head">Fri</div>
               <div class="eg-calendar-head">Sat</div>
+              <div class="eg-calendar-head">Sun</div>
             </div>
 
             <div class="eg-calendar-grid" id="attendanceCalendarGrid">
@@ -416,6 +553,7 @@ $attendanceDetailsJson = json_encode(
             <div class="d-flex justify-content-between mb-2"><span>Worked Hours</span><strong id="attDayHours">0.00</strong></div>
             <div class="d-flex justify-content-between mb-2"><span>Late Minutes</span><strong id="attDayLate">0</strong></div>
             <div class="d-flex justify-content-between"><span>Deduction</span><strong id="attDayDed">0.00</strong></div>
+            <div class="d-flex justify-content-between mt-2 d-none" id="attDaySuspWrap"><span>Suspension Period</span><strong id="attDaySusp">-</strong></div>
           </div>
         </div>
       </div>
@@ -438,6 +576,8 @@ $attendanceDetailsJson = json_encode(
         const elHours = document.getElementById('attDayHours');
         const elLate = document.getElementById('attDayLate');
         const elDed = document.getElementById('attDayDed');
+        const elSuspWrap = document.getElementById('attDaySuspWrap');
+        const elSusp = document.getElementById('attDaySusp');
 
         const grid = document.getElementById('attendanceCalendarGrid');
         if (!grid) return;
@@ -455,8 +595,41 @@ $attendanceDetailsJson = json_encode(
             elHours.textContent = row.hours_label || '0.00';
             elLate.textContent = String(Number(row.late_minutes || 0));
             elDed.textContent = row.deduction_label || '0.00';
+            if (row.status === 'Suspended' && row.suspension_start && row.suspension_end) {
+              elSusp.textContent = row.suspension_start + ' to ' + row.suspension_end;
+              elSuspWrap.classList.remove('d-none');
+            } else {
+              elSusp.textContent = '-';
+              elSuspWrap.classList.add('d-none');
+            }
             modal.show();
         });
+      })();
+    </script>
+    <script>
+      (function () {
+        var elTime = document.getElementById('egLiveClockTime');
+        var elDate = document.getElementById('egLiveClockDate');
+        if (!elTime) return;
+        function tick() {
+          var now = new Date();
+          elTime.textContent = now.toLocaleTimeString(undefined, {
+            hour: 'numeric',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+          });
+          if (elDate) {
+            elDate.textContent = now.toLocaleDateString(undefined, {
+              weekday: 'long',
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric'
+            });
+          }
+        }
+        tick();
+        setInterval(tick, 1000);
       })();
     </script>
     <?php include __DIR__ . '/../includes/footer.php'; ?>

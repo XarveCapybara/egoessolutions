@@ -7,6 +7,8 @@ if (($_SESSION['role'] ?? '') !== 'superadmin') {
 $name = $_SESSION['display_name'] ?? 'Super Admin';
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/eg_worked_minutes.php';
+require_once __DIR__ . '/../includes/payroll_deduction_types.php';
 
 $offices = $pdo->query('SELECT id, name FROM offices ORDER BY name')->fetchAll();
 
@@ -32,6 +34,16 @@ function eg_cash_advance_week_range(string $advanceDate): ?array
         'start' => $weekStart->format('Y-m-d'),
         'end' => $weekEnd->format('Y-m-d'),
     ];
+}
+
+function eg_last_payroll_day_of_month(DateTimeImmutable $dateInMonth): DateTimeImmutable
+{
+    $monthEnd = $dateInMonth->modify('last day of this month')->setTime(0, 0, 0);
+    $weekday = (int) $monthEnd->format('N'); // 1=Mon ... 7=Sun
+    if ($weekday >= 6) {
+        $monthEnd = $monthEnd->modify('-' . ($weekday - 5) . ' days');
+    }
+    return $monthEnd;
 }
 
 $period = trim((string) ($_GET['period'] ?? 'week'));
@@ -69,6 +81,15 @@ if ($period === 'month') {
     $rangeStart = $weekStartStr;
     $rangeEnd = $weekEndStr;
     $periodSummaryLabel = $weekMonday->format('M j') . ' – ' . $weekFriday->format('M j, Y') . ' (Mon–Fri)';
+}
+
+$lastPayrollDay = eg_last_payroll_day_of_month($weekFriday);
+$defaultShowDeductions = ($period === 'month') || ($period === 'week' && $weekFriday >= $lastPayrollDay);
+$showDeductionsRaw = trim((string) ($_GET['show_deductions'] ?? ''));
+if ($showDeductionsRaw === '1' || $showDeductionsRaw === '0') {
+    $showDeductions = $showDeductionsRaw === '1';
+} else {
+    $showDeductions = $defaultShowDeductions;
 }
 
 $officeFilter = (int) ($_GET['office_id'] ?? 0);
@@ -109,6 +130,7 @@ try {
 
 $defaultHourly = 0.0;
 $deductionPerMinute = 0.0;
+$configurableDeductionsPerEmployee = 0.0;
 if ($hasAppSettingsTable) {
     $rateStmt = $pdo->prepare('SELECT setting_value FROM app_settings WHERE setting_key = ? LIMIT 1');
     $rateStmt->execute(['hourly_rate_default']);
@@ -122,6 +144,12 @@ if ($hasAppSettingsTable) {
     if ($dv !== false && $dv !== null && is_numeric($dv)) {
         $deductionPerMinute = (float) $dv;
     }
+}
+try {
+    eg_ensure_payroll_deduction_types($pdo);
+    $configurableDeductionsPerEmployee = (float) $pdo->query('SELECT COALESCE(SUM(default_amount), 0) FROM payroll_deduction_types')->fetchColumn();
+} catch (Throwable $e) {
+    $configurableDeductionsPerEmployee = 0.0;
 }
 
 $payrollRows = [];
@@ -181,33 +209,15 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
                 'loan_deduction' => 0.0,
             ];
         }
-        $workedMinutes = 0;
-        if (!empty($row['time_in']) && !empty($row['time_out'])) {
-            $actualInTs = strtotime((string) $row['time_in']);
-            $actualOutTs = strtotime((string) $row['time_out']);
-            $ld = (string) ($row['log_date'] ?? '');
-
-            // Determine office schedule for this log
-            $officeStart = (string) ($row['office_start'] ?? '08:00:00');
-            $officeEnd = (string) ($row['office_end'] ?? '17:00:00');
-            $isGraveyard = substr($officeStart, 0, 5) > substr($officeEnd, 0, 5);
-
-            $schedInTs = strtotime($ld . ' ' . $officeStart);
-            $schedOutTs = strtotime($ld . ' ' . $officeEnd);
-            if ($isGraveyard) {
-                $schedOutTs = strtotime('+1 day', $schedOutTs);
-            }
-
-            // Pay counting starts at office_start
-            $effectiveInTs = $schedInTs;
-            $effectiveOutTs = min($actualOutTs, $schedOutTs);
-
-            if ($effectiveOutTs > $effectiveInTs) {
-                $rawWm = (int) floor(($effectiveOutTs - $effectiveInTs) / 60);
-                // Round down to the nearest full hour as per instruction
-                $workedMinutes = (int) floor($rawWm / 60) * 60;
-            }
-        }
+        $ld = (string) ($row['log_date'] ?? '');
+        $rawWm = eg_worked_minutes_within_office_hours(
+            $ld,
+            $row['time_in'] ?? null,
+            $row['time_out'] ?? null,
+            (string) ($row['office_start'] ?? '08:00:00'),
+            (string) ($row['office_end'] ?? '17:00:00')
+        );
+        $workedMinutes = (int) floor($rawWm / 60) * 60;
         $byEmployee[$eid]['worked_minutes'] += $workedMinutes;
 
         $rowDeduction = (float) ($row['deduction_amount'] ?? 0);
@@ -289,7 +299,8 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
         }
         $hours = $agg['worked_minutes'] / 60;
         $gross = $hours * $hourly;
-        $ded = $agg['deductions'];
+        $baseDeductions = (float) $agg['deductions'];
+        $ded = $baseDeductions + ($showDeductions ? $configurableDeductionsPerEmployee : 0.0);
         $net = $gross - $ded;
         $payrollRows[] = [
             'employee_id' => $eid,
@@ -412,7 +423,7 @@ $payslipEmployeeIdList = implode(',', array_map(function ($pr) {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EGoes Solutions</title>
+    <title>E-GOES Solutions</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -463,6 +474,14 @@ $payslipEmployeeIdList = implode(',', array_map(function ($pr) {
                   <?php endforeach; ?>
                 </select>
               </div>
+              <div class="col-12 col-md-4 col-lg-3">
+                <label class="form-label d-block">Payslip deductions</label>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="showDeductionsToggle"<?= $showDeductions ? ' checked' : '' ?> />
+                  <label class="form-check-label" for="showDeductionsToggle">Show deductions by default</label>
+                </div>
+                <input type="hidden" name="show_deductions" id="showDeductionsField" value="<?= $showDeductions ? '1' : '0' ?>" />
+              </div>
               <div class="col-12 col-md-3 col-lg-2 d-grid">
                 <button type="submit" class="btn btn-primary">Apply</button>
               </div>
@@ -475,6 +494,7 @@ $payslipEmployeeIdList = implode(',', array_map(function ($pr) {
                       'week' => $weekStartStr,
                       'month' => $monthValueForInput,
                       'office_id' => $officeFilter,
+                      'show_deductions' => $showDeductions ? '1' : '0',
                   ]), ENT_QUOTES, 'UTF-8') ?>"
                 >
                   Generate Department Summary
@@ -489,6 +509,7 @@ $payslipEmployeeIdList = implode(',', array_map(function ($pr) {
                       'week' => $weekStartStr,
                       'month' => $monthValueForInput,
                       'office_id' => $officeFilter,
+                      'show_deductions' => $showDeductions ? '1' : '0',
                   ]), ENT_QUOTES, 'UTF-8') ?>"
                 >
                   Generate Office List Summary
@@ -624,6 +645,7 @@ $payslipEmployeeIdList = implode(',', array_map(function ($pr) {
                                 'month' => $monthValueForInput,
                                 'office_id' => $officeFilter,
                                 'employees' => $payslipEmployeeIdList,
+                                'show_deductions' => $showDeductions ? '1' : '0',
                             ]), ENT_QUOTES, 'UTF-8') ?>"
                             title="Print payslip"
                             aria-label="Print payslip for <?= htmlspecialchars($pr['full_name'], ENT_QUOTES, 'UTF-8') ?>"
@@ -739,6 +761,17 @@ $payslipEmployeeIdList = implode(',', array_map(function ($pr) {
     ></script>
     <script>
       (function () {
+        var toggle = document.getElementById('showDeductionsToggle');
+        var hidden = document.getElementById('showDeductionsField');
+        if (!toggle || !hidden) return;
+        function syncHidden() {
+          hidden.value = toggle.checked ? '1' : '0';
+        }
+        toggle.addEventListener('change', syncHidden);
+        syncHidden();
+      })();
+
+      (function () {
         const periodSelect = document.getElementById('periodSelect');
         const weekWrap = document.getElementById('weekFieldWrap');
         const monthWrap = document.getElementById('monthFieldWrap');
@@ -776,6 +809,7 @@ $payslipEmployeeIdList = implode(',', array_map(function ($pr) {
           month: <?= json_encode($monthValueForInput, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>,
           office_id: String(<?= (int) $officeFilter ?>),
           employees: <?= json_encode($payslipEmployeeIdList, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>,
+          show_deductions: <?= json_encode($showDeductions ? '1' : '0', JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>,
         });
         const pdPrintPayslip = document.getElementById('pdPrintPayslip');
         const emptyRow =

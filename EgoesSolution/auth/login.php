@@ -6,7 +6,7 @@ session_start();
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EGoes Solutions</title>
+    <title>E-GOES Solutions</title>
     <link
       href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
       rel="stylesheet"
@@ -15,13 +15,34 @@ session_start();
     />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" />
     <link rel="stylesheet" href="../assets/css/style.css" />
+    <style>
+      .eg-topbar-login .eg-system-wordmark-top,
+      .eg-topbar-login .eg-system-wordmark-bottom {
+        font-weight: 500 !important;
+      }
+      .eg-password-wrap {
+        position: relative;
+      }
+      .eg-password-wrap .form-control {
+        padding-right: 2.6rem;
+      }
+      .eg-password-toggle {
+        position: absolute;
+        right: 0.75rem;
+        top: 50%;
+        transform: translateY(-50%);
+        border: 0;
+        background: transparent;
+        padding: 0;
+        color: #6c757d;
+        line-height: 1;
+        z-index: 5;
+      }
+    </style>
   </head>
   <body class="bg-light">
-    <header class="eg-topbar">
-      <div class="d-flex align-items-center">
-        <img src="../assets/images/egoes-logo.png?v=3" alt="E-GOES Solutions" class="eg-system-logo" />
-      </div>
-    </header>
+    <?php $headerTopbarExtraClass = 'eg-topbar-login'; $headerAssetBase = '../'; ?>
+    <?php include __DIR__ . '/../includes/header.php'; ?>
 
     <div class="container py-5">
       <div class="row justify-content-center">
@@ -47,7 +68,7 @@ session_start();
                     class="form-control"
                     id="username"
                     name="username"
-                    placeholder="e.g. admin@egoes.com or superadmin"
+                    placeholder="Enter email or username"
                     required
                     autocomplete="off"
                   />
@@ -60,7 +81,7 @@ session_start();
                 <label for="password" class="form-label fw-semibold"
                   >Password</label
                 >
-                <div class="input-group">
+                <div class="input-group eg-password-wrap">
                   <span class="input-group-text">
                     <span class="bi bi-lock-fill"></span>
                   </span>
@@ -72,18 +93,15 @@ session_start();
                     required
                     autocomplete="off"
                   />
-                  <span class="input-group-text bg-white">
-                    <button
-                      type="button"
-                      class="btn btn-sm border-0 p-0 d-flex align-items-center gap-1 text-secondary"
-                      id="togglePasswordBtn"
-                      aria-label="Show password"
-                      title="Show password"
-                    >
-                      <span class="bi bi-eye" id="togglePasswordIcon"></span>
-                      <span id="togglePasswordLabel">Show</span>
-                    </button>
-                  </span>
+                  <button
+                    type="button"
+                    class="eg-password-toggle shadow-none"
+                    id="togglePasswordBtn"
+                    aria-label="Show password"
+                    title="Show password"
+                  >
+                    <span class="bi bi-eye" id="togglePasswordIcon"></span>
+                  </button>
                   <div class="invalid-feedback">
                     Please enter your password.
                   </div>
@@ -136,13 +154,11 @@ session_start();
         const pwd = document.getElementById('password');
         const btn = document.getElementById('togglePasswordBtn');
         const icon = document.getElementById('togglePasswordIcon');
-        const label = document.getElementById('togglePasswordLabel');
-        if (!pwd || !btn || !icon || !label) return;
+        if (!pwd || !btn || !icon) return;
         btn.addEventListener('click', function () {
           const isHidden = pwd.type === 'password';
           pwd.type = isHidden ? 'text' : 'password';
           icon.className = isHidden ? 'bi bi-eye-slash' : 'bi bi-eye';
-          label.textContent = isHidden ? 'Hide' : 'Show';
           btn.setAttribute('aria-label', isHidden ? 'Hide password' : 'Show password');
           btn.setAttribute('title', isHidden ? 'Hide password' : 'Show password');
         });

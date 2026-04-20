@@ -6,7 +6,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EGoes Solutions</title>
+    <title>E-GOES Solutions</title>
     <!-- Bootstrap CSS -->
     <link
       href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
@@ -15,16 +15,22 @@
       crossorigin="anonymous"
     />
     <link rel="stylesheet" href="assets/css/style.css" />
+    <style>
+      .eg-topbar-login .eg-system-wordmark-top,
+      .eg-topbar-login .eg-system-wordmark-bottom {
+        font-weight: 500 !important;
+      }
+    </style>
   </head>
   <body class="bg-light">
     <!-- Landing Page -->
     <div class="min-vh-100 d-flex flex-column">
       <!-- Top Bar / Branding -->
-      <header class="eg-topbar">
-        <div class="d-flex align-items-center">
-          <img src="assets/images/egoes-logo.png?v=3" alt="E-GOES Solutions" class="eg-system-logo" />
-        </div>
-      </header>
+      <?php
+      $headerTopbarExtraClass = 'eg-topbar-login';
+      $headerAssetBase = '';
+      ?>
+      <?php include __DIR__ . '/includes/header.php'; ?>
 
       <!-- Hero Section -->
       <main class="flex-fill d-flex align-items-center justify-content-center">

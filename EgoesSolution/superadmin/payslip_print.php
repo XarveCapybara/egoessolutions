@@ -7,6 +7,7 @@ if (($_SESSION['role'] ?? '') !== 'superadmin') {
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../includes/payroll_deduction_types.php';
+require_once __DIR__ . '/../includes/eg_worked_minutes.php';
 
 function eg_payroll_monday(DateTimeImmutable $d): DateTimeImmutable
 {
@@ -45,6 +46,16 @@ function eg_payslip_period_display(string $period, DateTimeImmutable $weekMonday
     return $weekMonday->format('F j') . '-' . $weekFriday->format('j, Y');
   }
   return $weekMonday->format('M j') . ' – ' . $weekFriday->format('M j, Y');
+}
+
+function eg_last_payroll_day_of_month(DateTimeImmutable $dateInMonth): DateTimeImmutable
+{
+  $monthEnd = $dateInMonth->modify('last day of this month')->setTime(0, 0, 0);
+  $weekday = (int) $monthEnd->format('N'); // 1=Mon ... 7=Sun
+  if ($weekday >= 6) {
+    $monthEnd = $monthEnd->modify('-' . ($weekday - 5) . ' days');
+  }
+  return $monthEnd;
 }
 
 $employeeId = (int) ($_GET['employee_id'] ?? 0);
@@ -251,32 +262,14 @@ if (!$hasAttendanceLogs || !$hasEmployeesTable) {
         if ($ld !== '') {
           $datesPresent[$ld] = true;
         }
-        $wm = 0;
-        if (!empty($row['time_in']) && !empty($row['time_out'])) {
-          $actualInTs = strtotime((string) $row['time_in']);
-          $actualOutTs = strtotime((string) $row['time_out']);
-
-          // Determine office schedule for this log
-          $officeStart = (string) ($row['office_start'] ?? '08:00:00');
-          $officeEnd = (string) ($row['office_end'] ?? '17:00:00');
-          $isGraveyard = substr($officeStart, 0, 5) > substr($officeEnd, 0, 5);
-
-          $schedInTs = strtotime($ld . ' ' . $officeStart);
-          $schedOutTs = strtotime($ld . ' ' . $officeEnd);
-          if ($isGraveyard) {
-            $schedOutTs = strtotime('+1 day', $schedOutTs);
-          }
-
-          // Pay counting starts at office_start
-          $effectiveInTs = $schedInTs;
-          $effectiveOutTs = min($actualOutTs, $schedOutTs);
-
-          if ($effectiveOutTs > $effectiveInTs) {
-            $rawWm = (int) floor(($effectiveOutTs - $effectiveInTs) / 60);
-            // Round down to the nearest full hour as per instruction
-            $wm = (int) floor($rawWm / 60) * 60;
-          }
-        }
+        $rawWm = eg_worked_minutes_within_office_hours(
+          $ld,
+          $row['time_in'] ?? null,
+          $row['time_out'] ?? null,
+          (string) ($row['office_start'] ?? '08:00:00'),
+          (string) ($row['office_end'] ?? '17:00:00')
+        );
+        $wm = (int) floor($rawWm / 60) * 60;
         $workedMinutes += $wm;
 
         $rowDeduction = (float) ($row['deduction_amount'] ?? 0);
@@ -306,16 +299,30 @@ $allowance = 0.0;
 $overtimePay = 0.0;
 
 $payrollDeductionLines = [];
-  $totalConfigurableDeductions = 0.0;
-  $payrollDeductionLines = [];
+$payrollDeductionLinesFull = [];
+$totalConfigurableDeductions = 0.0;
+$defaultShowDeductions = true;
+$showDeductionsParamRaw = trim((string) ($_GET['show_deductions'] ?? ''));
+$showDeductionsParam = null;
+if ($showDeductionsParamRaw === '1' || $showDeductionsParamRaw === '0') {
+  $showDeductionsParam = ($showDeductionsParamRaw === '1');
+}
   try {
-    $lastDayOfMonth = date('Y-m-t', strtotime($rangeStart));
-    $isLastWeek = ($rangeStart <= $lastDayOfMonth && $rangeEnd >= $lastDayOfMonth);
+    $lastPayrollDay = eg_last_payroll_day_of_month($weekFriday);
+    $isLastWeek = ($period === 'week' && $weekFriday >= $lastPayrollDay);
     $shouldApplyStatutory = ($period === 'month' || $isLastWeek);
+    $defaultShowDeductions = $shouldApplyStatutory;
 
     eg_ensure_payroll_deduction_types($pdo);
     $stmt = $pdo->query('SELECT label, default_amount FROM payroll_deduction_types ORDER BY id ASC');
     $payrollDeductionLines = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    // Snapshot DB amounts before weekly non–last-week zeroing so "Show deductions" can still reveal SSS/etc.
+    $payrollDeductionLinesFull = array_map(static function ($row) {
+      return [
+        'label' => (string) ($row['label'] ?? ''),
+        'default_amount' => (float) ($row['default_amount'] ?? 0),
+      ];
+    }, $payrollDeductionLines);
 
     if ($shouldApplyStatutory) {
       foreach ($payrollDeductionLines as $line) {
@@ -328,7 +335,12 @@ $payrollDeductionLines = [];
     }
   } catch (Throwable $e) {
     $payrollDeductionLines = [];
+    $payrollDeductionLinesFull = [];
   }
+
+if ($showDeductionsParam !== null) {
+  $defaultShowDeductions = $showDeductionsParam;
+}
 
 
 
@@ -365,15 +377,22 @@ $payrollDeductionLines = [];
     $cashAdvanceDeduction = 0.0;
   }
 
+$totalStatutoryFull = 0.0;
+foreach ($payrollDeductionLinesFull as $row) {
+  $totalStatutoryFull += (float) ($row['default_amount'] ?? 0);
+}
+
 $totalStatutoryAndOther = $totalConfigurableDeductions + $otherDeductions;
 
 $totalDeductionsAll = $totalStatutoryAndOther + $tardinessAmount + $cashAdvanceDeduction;
 $net = $gross - $totalDeductionsAll;
 
-/** Total deductions if settings lines + “Other” show as 0 but late/attendance still applies */
-$totalDeductionsLateAttendanceOnly = $tardinessAmount + $cashAdvanceDeduction;
-/** Net pay for that same payslip view (gross minus late/attendance only; configurable & other treated as 0) */
-$netWithConfigurableLinesAsZero = $gross - $totalDeductionsLateAttendanceOnly;
+// When "Show deductions" is on: totals include reference amounts from payroll_deduction_types (even mid-month week).
+$totalDeductionsWithAllLinesShown = $totalStatutoryFull + $otherDeductions + $tardinessAmount + $cashAdvanceDeduction;
+$netIfAllDeductionLinesShown = $gross - $totalDeductionsWithAllLinesShown;
+// When "Show deductions" is off: configurable/statutory lines are hidden as 0.00, so totals must exclude them too.
+$totalDeductionsWithoutConfigurable = $otherDeductions + $tardinessAmount + $cashAdvanceDeduction;
+$netWithoutConfigurable = $gross - $totalDeductionsWithoutConfigurable;
 
 $fmtMoney = static function (float $n): string {
   return number_format($n, 2, '.', ',');
@@ -425,7 +444,7 @@ if (($_GET['export'] ?? '') === 'excel') {
     $amt = (float) ($line['default_amount'] ?? 0);
     fputcsv($out, [(string) ($line['label'] ?? ''), $fmtMoney($amt)]);
   }
-  fputcsv($out, ['Late / attendance deductions', $fmtMoney($tardinessAmount)]);
+  fputcsv($out, ['Tardiness', $fmtMoney($tardinessAmount)]);
   fputcsv($out, ['Cash advance deduction', $fmtMoney($cashAdvanceDeduction)]);
   fputcsv($out, ['Other deductions', $fmtMoney($otherDeductions)]);
   fputcsv($out, ['Total deductions', $fmtMoney($totalDeductionsAll)]);
@@ -442,7 +461,7 @@ if (($_GET['export'] ?? '') === 'excel') {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EGoes Solutions</title>
+  <title>E-GOES Solutions</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
     crossorigin="anonymous" />
   <link rel="stylesheet" href="../assets/css/payslip-print.css?v=29" />
@@ -545,12 +564,12 @@ if (($_GET['export'] ?? '') === 'excel') {
     <button type="button" class="btn btn-dark" onclick="window.print()">Print</button>
     <?php if ($error === null): ?>
       <div class="form-check ms-md-2 mb-0">
-        <input class="form-check-input" type="checkbox" id="psShowDeductions" checked
+        <input class="form-check-input" type="checkbox" id="psShowDeductions"<?= $defaultShowDeductions ? ' checked' : '' ?>
           aria-describedby="psShowDeductionsHelp" />
         <label class="form-check-label" for="psShowDeductions">Show deductions on payslip</label>
       </div>
-      <span id="psShowDeductionsHelp" class="text-muted small d-none d-md-inline">Uncheck to show 0.00 on payroll lines
-        (SSS, etc.); late/attendance deductions still apply.</span>
+      <span id="psShowDeductionsHelp" class="text-muted small d-none d-md-inline">Uncheck for this period’s actual pay totals
+        (0.00 on statutory lines). Check to show reference SSS, etc. from settings and matching totals.</span>
     <?php endif; ?>
   </div>
 
@@ -655,22 +674,23 @@ if (($_GET['export'] ?? '') === 'excel') {
               <div class="eg-payslip-box-title">Deductions</div>
               <table class="eg-payslip-deductions-inner">
                 <tbody>
-                  <?php foreach ($payrollDeductionLines as $line): ?>
-                    <?php $cfgAmt = (float) ($line['default_amount'] ?? 0); ?>
+                  <?php foreach ($payrollDeductionLines as $k => $line): ?>
+                    <?php
+                      $cfgAmt = (float) ($line['default_amount'] ?? 0);
+                      $cfgAmtFull = isset($payrollDeductionLinesFull[$k])
+                        ? (float) ($payrollDeductionLinesFull[$k]['default_amount'] ?? 0)
+                        : $cfgAmt;
+                    ?>
                     <tr>
                       <td><?= htmlspecialchars((string) ($line['label'] ?? ''), ENT_QUOTES, 'UTF-8') ?></td>
                       <td class="eg-payslip-num">
                         <span class="eg-payslip-ded-cfg"
-                          data-full="<?= htmlspecialchars($fmtMoney($cfgAmt), ENT_QUOTES, 'UTF-8') ?>"><?= $fmtMoney($cfgAmt) ?></span>
+                          data-full="<?= htmlspecialchars($fmtMoney($cfgAmtFull), ENT_QUOTES, 'UTF-8') ?>"><?= $fmtMoney($cfgAmt) ?></span>
                       </td>
                     </tr>
                   <?php endforeach; ?>
-                  <tr>
-                    <td><span class="eg-payslip-strike">Tardiness</span></td>
-                    <td class="eg-payslip-num eg-payslip-strike">—</td>
-                  </tr>
                   <tr class="eg-payslip-ded-late-row">
-                    <td>Late / attendance deductions</td>
+                    <td>Tardiness</td>
                     <td class="eg-payslip-num"><?= $fmtMoney($tardinessAmount) ?></td>
                   </tr>
                   <tr>
@@ -744,10 +764,12 @@ if (($_GET['export'] ?? '') === 'excel') {
     <script>
       window.__EG_PAYSLIP_AMOUNTS = <?= json_encode(
         [
-          'netFull' => $fmtMoney($net),
-          'netLateOnly' => $fmtMoney($netWithConfigurableLinesAsZero),
-          'totalDedFull' => $fmtMoney($totalDeductionsAll),
-          'totalDedLateOnly' => $fmtMoney($totalDeductionsLateAttendanceOnly),
+          // Checked: show all deduction lines + totals that include reference statutory (from settings).
+          'netFull' => $fmtMoney($netIfAllDeductionLinesShown),
+          'totalDedFull' => $fmtMoney($totalDeductionsWithAllLinesShown),
+          // Unchecked: totals match visible rows where configurable/statutory lines are 0.00.
+          'netLateOnly' => $fmtMoney($netWithoutConfigurable),
+          'totalDedLateOnly' => $fmtMoney($totalDeductionsWithoutConfigurable),
           'zero' => $fmtMoney(0.0),
         ],
         JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE
@@ -790,15 +812,26 @@ if (($_GET['export'] ?? '') === 'excel') {
         });
         var A = window.__EG_PAYSLIP_AMOUNTS;
         if (!cb || !A) return;
-        // Restore checkbox state from localStorage
-        var saved = localStorage.getItem('eg_payslip_show_deductions');
-        if (saved !== null) {
-          cb.checked = saved === '1';
+        var dedStorageKey = <?= json_encode(
+          'eg_payslip_show_deductions:' . $employeeId . ':' . $period . ':' . $rangeStart . ':' . $rangeEnd,
+          JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT
+        ) ?>;
+        var defaultShowDeductions = <?= $defaultShowDeductions ? 'true' : 'false' ?>;
+        var hasShowDeductionsParam = <?= $showDeductionsParam !== null ? 'true' : 'false' ?>;
+        // Restore checkbox (per employee/period so one unchecked view does not hide deductions everywhere)
+        if (hasShowDeductionsParam) {
+          cb.checked = defaultShowDeductions;
+        } else {
+          var saved = localStorage.getItem(dedStorageKey);
+          if (saved !== null) {
+            cb.checked = saved === '1';
+          } else {
+            cb.checked = defaultShowDeductions;
+          }
         }
         function sync() {
           var show = cb.checked;
-          // Persist state for navigation
-          localStorage.setItem('eg_payslip_show_deductions', show ? '1' : '0');
+          localStorage.setItem(dedStorageKey, show ? '1' : '0');
           var z = A.zero;
           document.querySelectorAll('.eg-payslip-ded-cfg').forEach(function (el) {
             el.textContent = show ? (el.getAttribute('data-full') || z) : z;

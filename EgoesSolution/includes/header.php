@@ -3,6 +3,13 @@
 if (!isset($name) || $name === '') {
   $name = $_SESSION['display_name'] ?? 'User';
 }
+$headerTopbarExtraClass = isset($headerTopbarExtraClass) ? trim((string) $headerTopbarExtraClass) : '';
+if (isset($headerAssetBase)) {
+  $headerAssetBase = trim((string) $headerAssetBase);
+  $headerAssetBase = $headerAssetBase === '' ? '' : rtrim($headerAssetBase, '/') . '/';
+} else {
+  $headerAssetBase = '../';
+}
 
 // Display name logic
 $role = $_SESSION['role'] ?? '';
@@ -37,6 +44,7 @@ if ($role === 'superadmin') {
   $prefix = 'Employee - ';
 }
 $isProfileHeader = in_array($role, ['admin', 'superadmin', 'employee'], true);
+$isGuestHeader = $role === '';
 $isEmployeeProfileModalEnabled = $role === 'employee';
 $isAdminProfileModalEnabled = $role === 'admin';
 $isSuperadminProfileModalEnabled = $role === 'superadmin';
@@ -62,8 +70,47 @@ if (count($parts) > 1) {
 }
 ?>
 <script>
+  (function () {
+    var iconCandidates = [
+      '<?= htmlspecialchars($headerAssetBase, ENT_QUOTES, "UTF-8") ?>assets/images/logo-white.png?v=1'
+    ];
+    var existingIcon = document.querySelector('link[rel="icon"]');
+    if (!existingIcon) {
+      existingIcon = document.createElement('link');
+      existingIcon.setAttribute('rel', 'icon');
+      existingIcon.setAttribute('type', 'image/png');
+      document.head.appendChild(existingIcon);
+    }
+
+    function applyIconAt(index) {
+      if (index >= iconCandidates.length) {
+        return;
+      }
+      var probe = new Image();
+      probe.onload = function () {
+        existingIcon.setAttribute('href', iconCandidates[index]);
+      };
+      probe.onerror = function () {
+        applyIconAt(index + 1);
+      };
+      probe.src = iconCandidates[index];
+    }
+
+    applyIconAt(0);
+  })();
+
   // Restore sidebar state BEFORE paint to eliminate flicker
   (function () {
+    var isPhone = window.matchMedia && window.matchMedia('(max-width: 767.98px)').matches;
+    if (isPhone) {
+      document.body.classList.add('sidebar-collapsed', 'no-sidebar-transition');
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          document.body.classList.remove('no-sidebar-transition');
+        });
+      });
+      return;
+    }
     if (localStorage.getItem('eg_sidebar_collapsed') === '1') {
       document.body.classList.add('sidebar-collapsed', 'no-sidebar-transition');
       requestAnimationFrame(function () {
@@ -74,9 +121,23 @@ if (count($parts) > 1) {
     }
   })();
 </script>
-<header class="eg-topbar d-flex justify-content-between align-items-center">
-  <div class="d-flex align-items-center gap-3">
-    <img src="../assets/images/egoes-logo.png?v=3" alt="E-GOES Solutions" class="eg-system-logo" />
+<style>
+  .eg-system-brand {
+    transition: transform 0.35s cubic-bezier(0.22, 0.61, 0.36, 1) !important;
+    transform-origin: left center !important;
+    cursor: pointer;
+  }
+  .eg-system-brand:hover {
+    transform: scale(1.06) !important;
+  }
+</style>
+<header class="eg-topbar<?= $headerTopbarExtraClass !== '' ? ' ' . htmlspecialchars($headerTopbarExtraClass, ENT_QUOTES, 'UTF-8') : '' ?> d-flex justify-content-between align-items-center">
+  <div class="eg-system-brand d-inline-flex align-items-center" style="gap:.6rem;">
+    <img src="<?= htmlspecialchars($headerAssetBase, ENT_QUOTES, 'UTF-8') ?>assets/images/logo-white.png" alt="E-Goes Solutions" class="eg-system-logo" style="width:36px;height:auto;display:block;" />
+    <div class="eg-system-wordmark d-flex flex-column" style="line-height:1.02;">
+      <span class="eg-system-wordmark-top" style="font-size:1rem;font-weight:900;color:#fff;text-transform:uppercase;">E-Goes</span>
+      <span class="eg-system-wordmark-bottom" style="font-size:.76rem;font-weight:900;color:rgba(255,255,255,.95);text-transform:uppercase;">Solutions</span>
+    </div>
   </div>
   <?php if ($isProfileHeader): ?>
     <a
@@ -109,7 +170,7 @@ if (count($parts) > 1) {
         <?php endif; ?>
       </div>
     </a>
-  <?php else: ?>
+  <?php elseif (!$isGuestHeader): ?>
     <div class="d-flex align-items-center me-3">
       <div class="me-2 fw-bold fs-5"><?= htmlspecialchars($prefix . $displayName) ?></div>
       <div class="eg-avatar-circle"></div>
