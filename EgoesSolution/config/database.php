@@ -8,7 +8,7 @@ $dbHost = '127.0.0.1';
 $dbPort = '3306';
 $dbName = 'egoessolution';
 $dbUser = 'root';
-$dbPass = ''; // if your root user has a password, put it here
+$dbPass = 'fieryblaze1'; // if your root user has a password, put it here
 
 $dsn = "mysql:host={$dbHost};port={$dbPort};dbname={$dbName};charset=utf8mb4";
 

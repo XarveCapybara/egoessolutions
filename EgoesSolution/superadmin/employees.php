@@ -256,28 +256,15 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
                         class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center justify-content-center"
                         style="width: 32px; height: 32px;"
                         data-bs-toggle="modal"
-                        data-bs-target="#changeRoleModal"
+                        data-bs-target="#employeeSettingsModal"
                         data-user-id="<?= (int) $emp['id'] ?>"
                         data-user-name="<?= htmlspecialchars($displayName) ?>"
                         data-user-role="<?= htmlspecialchars($emp['role'] ?? 'employee') ?>"
-                        title="Change Role"
-                        aria-label="Change Role"
+                        data-user-role-label="<?= htmlspecialchars($roleLabel) ?>"
+                        title="Settings"
+                        aria-label="Settings"
                       >
-                        <i class="bi bi-person-badge"></i>
-                      </button>
-                      <button
-                        type="button"
-                        class="btn btn-sm btn-outline-primary d-inline-flex align-items-center justify-content-center"
-                        style="width: 32px; height: 32px;"
-                        data-bs-toggle="modal"
-                        data-bs-target="#changePasswordModal"
-                        data-user-id="<?= (int) $emp['id'] ?>"
-                        data-user-name="<?= htmlspecialchars($displayName) ?>"
-                        data-user-role="<?= htmlspecialchars($roleLabel) ?>"
-                        title="Change Password"
-                        aria-label="Change Password"
-                      >
-                        <i class="bi bi-key"></i>
+                        <i class="bi bi-gear"></i>
                       </button>
                     </div>
                     <div class="d-flex align-items-center mb-2">
@@ -311,60 +298,52 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
       </div>
     </div>
 
-    <div class="modal fade" id="changeRoleModal" tabindex="-1" aria-labelledby="changeRoleModalLabel" aria-hidden="true">
+    <div class="modal fade" id="employeeSettingsModal" tabindex="-1" aria-labelledby="employeeSettingsModalLabel" aria-hidden="true">
       <div class="modal-dialog">
         <div class="modal-content">
           <div class="modal-header">
-            <h5 class="modal-title" id="changeRoleModalLabel">Change User Role</h5>
+            <h5 class="modal-title" id="employeeSettingsModalLabel">Employee Settings</h5>
             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
-          <form id="formChangeRole" action="update_user_role.php" method="post">
-            <div class="modal-body">
-              <input type="hidden" name="user_id" id="roleModalUserId" value="" />
-              <div class="mb-2 text-muted small" id="roleModalTargetText"></div>
-              <div class="mb-0">
-                <label for="roleModalSelect" class="form-label">Role</label>
-                <select class="form-select" id="roleModalSelect" name="role" required>
-                  <option value="employee">Employee</option>
-                  <option value="admin">Team leader (admin)</option>
-                </select>
-              </div>
-            </div>
-            <div class="modal-footer">
-              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-              <button type="submit" class="btn btn-primary" id="formChangeRoleSubmit">Save Role</button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>
+          <div class="modal-body">
+            <input type="hidden" id="settingsModalUserId" value="" />
+            <div class="mb-3 text-muted small" id="settingsModalTargetText"></div>
 
-    <div class="modal fade" id="changePasswordModal" tabindex="-1" aria-labelledby="changePasswordModalLabel" aria-hidden="true">
-      <div class="modal-dialog">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title" id="changePasswordModalLabel">Change User Password</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <form id="formChangePassword" action="update_user_password.php" method="post">
-            <div class="modal-body">
+            <form id="formChangePassword" action="update_user_password.php" method="post" class="border rounded p-3">
               <input type="hidden" name="user_id" id="passwordModalUserId" value="" />
-              <div class="mb-2 text-muted small" id="passwordModalTargetText"></div>
+              <h6 class="fw-bold mb-2"><i class="bi bi-key me-1"></i> Change Password</h6>
               <div class="mb-3">
                 <label for="new_password" class="form-label">New Password</label>
-                <input type="password" class="form-control" id="new_password" name="new_password" minlength="8" required />
+                <input type="text" class="form-control" id="new_password" name="new_password" minlength="8" required />
                 <div class="form-text">Minimum 8 characters.</div>
               </div>
               <div class="mb-0">
                 <label for="confirm_password" class="form-label">Confirm Password</label>
-                <input type="password" class="form-control" id="confirm_password" name="confirm_password" minlength="8" required />
+                <input type="text" class="form-control" id="confirm_password" name="confirm_password" minlength="8" required />
               </div>
-            </div>
-            <div class="modal-footer">
-              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-              <button type="submit" class="btn btn-primary" id="formChangePasswordSubmit">Update Password</button>
-            </div>
-          </form>
+              <div class="d-flex justify-content-end mt-3">
+                <button type="submit" class="btn btn-primary btn-sm" id="formChangePasswordSubmit">Update Password</button>
+              </div>
+            </form>
+
+            <form id="formChangeRole" action="update_user_role.php" method="post" class="border rounded p-3 mt-3">
+              <input type="hidden" name="user_id" id="roleModalUserId" value="" />
+              <h6 class="fw-bold mb-2"><i class="bi bi-person-badge me-1"></i> Change Role</h6>
+              <div class="mb-2">
+                <label for="roleModalSelect" class="form-label">Role</label>
+                <select class="form-select form-select-sm" id="roleModalSelect" name="role" required>
+                  <option value="employee">Employee</option>
+                  <option value="admin">Team leader (admin)</option>
+                </select>
+              </div>
+              <div class="d-flex justify-content-end">
+                <button type="submit" class="btn btn-primary btn-sm" id="formChangeRoleSubmit">Save Role</button>
+              </div>
+            </form>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+          </div>
         </div>
       </div>
     </div>
@@ -396,39 +375,29 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
         });
       }
 
-      const changeRoleModal = document.getElementById('changeRoleModal');
-      if (changeRoleModal) {
-        changeRoleModal.addEventListener('show.bs.modal', function (event) {
+      const employeeSettingsModal = document.getElementById('employeeSettingsModal');
+      if (employeeSettingsModal) {
+        employeeSettingsModal.addEventListener('show.bs.modal', function (event) {
           const btn = event.relatedTarget;
           if (!btn) return;
           const userId = btn.getAttribute('data-user-id') || '';
           const userName = btn.getAttribute('data-user-name') || 'User';
           const roleRaw = (btn.getAttribute('data-user-role') || 'employee').toLowerCase();
+          const roleLabel = btn.getAttribute('data-user-role-label') || '';
+          const settingsUserId = document.getElementById('settingsModalUserId');
           const userIdInput = document.getElementById('roleModalUserId');
-          const targetText = document.getElementById('roleModalTargetText');
+          const pwdUserIdInput = document.getElementById('passwordModalUserId');
+          const targetText = document.getElementById('settingsModalTargetText');
           const roleSelect = document.getElementById('roleModalSelect');
+          const newPasswordInput = document.getElementById('new_password');
+          const confirmPasswordInput = document.getElementById('confirm_password');
+          if (settingsUserId) settingsUserId.value = userId;
           if (userIdInput) userIdInput.value = userId;
-          if (targetText) targetText.textContent = 'Changing role for: ' + userName;
+          if (pwdUserIdInput) pwdUserIdInput.value = userId;
+          if (targetText) targetText.textContent = 'Managing account for: ' + userName + (roleLabel ? ' (' + roleLabel + ')' : '');
           if (roleSelect) {
             roleSelect.value = roleRaw === 'admin' ? 'admin' : 'employee';
           }
-        });
-      }
-
-      const changePasswordModal = document.getElementById('changePasswordModal');
-      if (changePasswordModal) {
-        changePasswordModal.addEventListener('show.bs.modal', function (event) {
-          const btn = event.relatedTarget;
-          if (!btn) return;
-          const userId = btn.getAttribute('data-user-id') || '';
-          const userName = btn.getAttribute('data-user-name') || 'User';
-          const userRole = btn.getAttribute('data-user-role') || '';
-          const userIdInput = document.getElementById('passwordModalUserId');
-          const targetText = document.getElementById('passwordModalTargetText');
-          const newPasswordInput = document.getElementById('new_password');
-          const confirmPasswordInput = document.getElementById('confirm_password');
-          if (userIdInput) userIdInput.value = userId;
-          if (targetText) targetText.textContent = 'Updating password for: ' + userName + (userRole ? ' (' + userRole + ')' : '');
           if (newPasswordInput) newPasswordInput.value = '';
           if (confirmPasswordInput) confirmPasswordInput.value = '';
         });
@@ -514,8 +483,8 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
 
         const roleForm = document.getElementById('formChangeRole');
         const roleSubmit = document.getElementById('formChangeRoleSubmit');
-        const roleModalEl = document.getElementById('changeRoleModal');
-        if (roleForm && roleSubmit && roleModalEl) {
+        const settingsModalEl = document.getElementById('employeeSettingsModal');
+        if (roleForm && roleSubmit && settingsModalEl) {
           roleForm.addEventListener('submit', async function (e) {
             e.preventDefault();
             const prev = roleSubmit.textContent;
@@ -539,15 +508,16 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
                 if (badge && data.role_label) {
                   badge.textContent = data.role_label;
                 }
-                const rBtn = card.querySelector('[data-bs-target="#changeRoleModal"]');
-                const pBtn = card.querySelector('[data-bs-target="#changePasswordModal"]');
-                if (rBtn) rBtn.setAttribute('data-user-role', data.role);
-                if (pBtn && data.role_label) pBtn.setAttribute('data-user-role', data.role_label);
+                const settingsBtn = card.querySelector('[data-bs-target="#employeeSettingsModal"]');
+                if (settingsBtn) {
+                  settingsBtn.setAttribute('data-user-role', data.role);
+                  if (data.role_label) settingsBtn.setAttribute('data-user-role-label', data.role_label);
+                }
               }
               if (typeof window.applyEmployeeFilters === 'function') {
                 window.applyEmployeeFilters();
               }
-              const inst = bootstrap.Modal.getInstance(roleModalEl);
+              const inst = bootstrap.Modal.getInstance(settingsModalEl);
               if (inst) inst.hide();
               showAjaxAlert(data.message || 'Role updated.', false);
             } catch (err) {
@@ -561,8 +531,7 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
 
         const pwdForm = document.getElementById('formChangePassword');
         const pwdSubmit = document.getElementById('formChangePasswordSubmit');
-        const pwdModalEl = document.getElementById('changePasswordModal');
-        if (pwdForm && pwdSubmit && pwdModalEl) {
+        if (pwdForm && pwdSubmit) {
           pwdForm.addEventListener('submit', async function (e) {
             e.preventDefault();
             const prev = pwdSubmit.textContent;
@@ -582,7 +551,7 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
               const cp = document.getElementById('confirm_password');
               if (np) np.value = '';
               if (cp) cp.value = '';
-              const inst = bootstrap.Modal.getInstance(pwdModalEl);
+              const inst = bootstrap.Modal.getInstance(settingsModalEl);
               if (inst) inst.hide();
               showAjaxAlert(data.message || 'Password updated.', false);
             } catch (err) {

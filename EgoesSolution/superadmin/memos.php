@@ -137,16 +137,70 @@ try {
     $policies = $pdo->query("SELECT * FROM violation_policies ORDER BY code ASC")->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {}
 
-// --- Fetch Issued Memos ---
-$issuedMemos = [];
+// --- Fetch Employees With Issued Memos ---
+$memoEmployees = [];
 try {
-    $issuedMemos = $pdo->query("
-        SELECT m.*, u.full_name, o.name AS office_name
+    $memoEmployees = $pdo->query("
+        SELECT 
+            u.id AS user_id,
+            u.full_name,
+            COALESCE(o.name, 'General') AS office_name,
+            COUNT(m.id) AS total_memos,
+            SUM(CASE WHEN m.status = 'active' THEN 1 ELSE 0 END) AS active_memos,
+            MAX(m.created_at) AS latest_memo_date
         FROM employee_memos m
         JOIN users u ON m.user_id = u.id
-        LEFT JOIN offices o ON m.office_id = o.id
-        ORDER BY m.created_at DESC
+        LEFT JOIN offices o ON u.office_id = o.id
+        GROUP BY u.id, u.full_name, o.name
+        HAVING COUNT(m.id) > 0
+        ORDER BY latest_memo_date DESC
     ")->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {}
+
+$memoHistoryByUser = [];
+try {
+    $memoHistoryRows = $pdo->query("
+        SELECT 
+            m.user_id,
+            COALESCE(o.name, 'General') AS office_name,
+            m.violation_code,
+            m.violation_name,
+            m.offense_number,
+            m.consequence,
+            m.consequence_type,
+            m.suspension_days,
+            m.suspension_start,
+            m.suspension_end,
+            m.status,
+            m.created_at,
+            m.memo_notes
+        FROM employee_memos m
+        LEFT JOIN offices o ON m.office_id = o.id
+        ORDER BY m.created_at DESC, m.id DESC
+    ")->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($memoHistoryRows as $row) {
+        $userId = (int)($row['user_id'] ?? 0);
+        if ($userId <= 0) {
+            continue;
+        }
+        if (!isset($memoHistoryByUser[$userId])) {
+            $memoHistoryByUser[$userId] = [];
+        }
+        $memoHistoryByUser[$userId][] = [
+            'office_name' => (string)($row['office_name'] ?? 'General'),
+            'violation_code' => (string)($row['violation_code'] ?? ''),
+            'violation_name' => (string)($row['violation_name'] ?? ''),
+            'offense_number' => (int)($row['offense_number'] ?? 0),
+            'consequence' => (string)($row['consequence'] ?? ''),
+            'consequence_type' => (string)($row['consequence_type'] ?? ''),
+            'suspension_days' => (int)($row['suspension_days'] ?? 0),
+            'suspension_start' => (string)($row['suspension_start'] ?? ''),
+            'suspension_end' => (string)($row['suspension_end'] ?? ''),
+            'status' => (string)($row['status'] ?? ''),
+            'created_at' => (string)($row['created_at'] ?? ''),
+            'memo_notes' => (string)($row['memo_notes'] ?? ''),
+        ];
+    }
 } catch (PDOException $e) {}
 
 ?>
@@ -174,6 +228,85 @@ try {
         .cb-warning { background-color: #fff3cd; color: #856404; }
         .cb-suspension { background-color: #cfe2ff; color: #084298; }
         .cb-termination { background-color: #f8d7da; color: #842029; }
+        .memo-signature-line {
+            border-bottom: 1px solid #1f2937;
+            min-height: 34px;
+            width: 260px;
+            margin: 20px auto 0;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            padding-bottom: 4px;
+        }
+        .memo-signature-block {
+            width: 260px;
+            margin-left: auto;
+            text-align: center;
+        }
+        .memo-signature-name {
+            font-size: 13px;
+            font-weight: 700;
+        }
+        .memo-signature-role {
+            font-size: 12px;
+            color: #475569;
+            margin-top: 4px;
+        }
+        #printMemoSheet {
+            display: none;
+        }
+        @media print {
+            body.printing-memo > *:not(#printMemoSheet) {
+                display: none !important;
+            }
+            body.printing-memo #printMemoSheet {
+                display: block !important;
+                position: static;
+                background: #fff;
+                padding: 24px;
+                font-family: Arial, Helvetica, sans-serif;
+                color: #1f2937;
+                line-height: 1.45;
+            }
+            body.printing-memo #printMemoSheet .print-title {
+                font-size: 20px;
+                font-weight: 700;
+                margin: 0 0 8px;
+            }
+            body.printing-memo #printMemoSheet .print-meta {
+                font-size: 12px;
+                color: #64748b;
+                margin: 0 0 10px;
+            }
+            body.printing-memo #printMemoSheet .print-letter {
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                background: #f8fafc;
+                padding: 12px;
+                white-space: pre-wrap;
+                font-size: 13px;
+            }
+            body.printing-memo #printMemoSheet .print-sign-wrap {
+                width: 260px;
+                margin: 24px 0 0 auto;
+                text-align: center;
+            }
+            body.printing-memo #printMemoSheet .print-sign-line {
+                border-bottom: 1px solid #1f2937;
+                min-height: 34px;
+                display: flex;
+                align-items: flex-end;
+                justify-content: center;
+                padding-bottom: 4px;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            body.printing-memo #printMemoSheet .print-sign-role {
+                font-size: 12px;
+                color: #475569;
+                margin-top: 4px;
+            }
+        }
     </style>
 </head>
 <body class="bg-light">
@@ -184,7 +317,7 @@ try {
             <?php include __DIR__ . '/../includes/sidebar_superadmin.php'; ?>
 
             <main class="col-12 col-md-9 col-lg-10 py-4">
-                <div class="d-flex justify-content-between align-items-center mb-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
                     <div>
                         <h3 class="fw-bold mb-1">Violation Policies & Memos</h3>
                         <p class="text-muted small mb-0">Dynamic configuration for company rules and disciplinary actions.</p>
@@ -193,6 +326,50 @@ try {
                         <i class="bi bi-plus-lg me-1"></i> Add Dynamic Policy
                     </button>
                 </div>
+                <!-- Global Issued Memos Oversight -->
+                <div class="eg-panel p-4 mb-4">
+                    <h5 class="fw-bold mb-4"><i class="bi bi-journal-text me-2"></i>Global Issued Memos Oversight</h5>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Employee</th>
+                                    <th>Office</th>
+                                    <th>Total Issued Memos</th>
+                                    <th>Active Memos</th>
+                                    <th>Latest Memorandum Date</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if (empty($memoEmployees)): ?>
+                                    <tr><td colspan="5" class="text-center py-4 text-muted">No employees with issued memorandums yet.</td></tr>
+                                <?php else: ?>
+                                    <?php foreach ($memoEmployees as $employeeMemo): ?>
+                                        <tr>
+                                            <td>
+                                                <a href="#" class="fw-bold text-decoration-none js-employee-memo-history-btn"
+                                                   data-bs-toggle="modal"
+                                                   data-bs-target="#employeeMemoHistoryModal"
+                                                   data-user-id="<?= (int)$employeeMemo['user_id'] ?>"
+                                                   data-employee-name="<?= htmlspecialchars((string)$employeeMemo['full_name'], ENT_QUOTES, 'UTF-8') ?>"
+                                                   title="View employee memorandums">
+                                                    <?= htmlspecialchars($employeeMemo['full_name']) ?>
+                                                </a>
+                                            </td>
+                                            <td><span class="badge bg-secondary opacity-75"><?= htmlspecialchars($employeeMemo['office_name']) ?></span></td>
+                                            <td><span class="badge bg-primary-subtle text-primary-emphasis"><?= (int)$employeeMemo['total_memos'] ?></span></td>
+                                            <td><span class="badge <?= ((int)$employeeMemo['active_memos'] > 0) ? 'bg-danger' : 'bg-success' ?>"><?= (int)$employeeMemo['active_memos'] ?></span></td>
+                                            <td class="small text-muted">
+                                                <?= !empty($employeeMemo['latest_memo_date']) ? date('M j, Y', strtotime($employeeMemo['latest_memo_date'])) : '—' ?>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
 
                 <?php if ($status && $message): ?>
                     <div class="alert alert-<?= $status === 'success' ? 'success' : 'danger' ?> alert-dismissible fade show" role="alert">
@@ -272,55 +449,7 @@ try {
                     </div>
                 </div>
 
-                <!-- Global Issued Memos Oversight -->
-                <div class="eg-panel p-4">
-                    <h5 class="fw-bold mb-4"><i class="bi bi-journal-text me-2"></i>Global Issued Memos Oversight</h5>
-                    <div class="table-responsive">
-                        <table class="table table-sm table-hover align-middle mb-0">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>Employee</th>
-                                    <th>Office</th>
-                                    <th>Violation</th>
-                                    <th>Offense</th>
-                                    <th>Consequence</th>
-                                    <th>Status</th>
-                                    <th>Date</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if (empty($issuedMemos)): ?>
-                                    <tr><td colspan="7" class="text-center py-4 text-muted">No issued memos found across any office.</td></tr>
-                                <?php else: ?>
-                                    <?php foreach ($issuedMemos as $m): ?>
-                                        <tr>
-                                            <td>
-                                                <div class="fw-bold"><?= htmlspecialchars($m['full_name']) ?></div>
-                                            </td>
-                                            <td><span class="badge bg-secondary opacity-75"><?= htmlspecialchars($m['office_name'] ?? 'General') ?></span></td>
-                                            <td><?= htmlspecialchars($m['violation_code']) ?></td>
-                                            <td>#<?= (int)$m['offense_number'] ?></td>
-                                            <td>
-                                                <div class="small fw-semibold"><?= htmlspecialchars($m['consequence']) ?></div>
-                                                <?php if (($m['consequence_type'] ?? '') === 'suspension'): ?>
-                                                    <div class="text-primary" style="font-size: 0.7rem;">
-                                                        <i class="bi bi-calendar-x"></i> <?= (int)$m['suspension_days'] ?> days (<?= $m['suspension_start'] ?> to <?= $m['suspension_end'] ?>)
-                                                    </div>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td>
-                                                <span class="badge <?= $m['status'] === 'active' ? 'bg-danger' : 'bg-success' ?>">
-                                                    <?= ucfirst($m['status']) ?>
-                                                </span>
-                                            </td>
-                                            <td class="small text-muted"><?= date('M j, Y', strtotime($m['created_at'])) ?></td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+                
             </main>
         </div>
     </div>
@@ -458,6 +587,69 @@ try {
         </div>
     </div>
 
+    <div class="modal fade" id="employeeMemoHistoryModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content border-0 shadow">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold" id="employeeMemoHistoryTitle">
+                        <i class="bi bi-person-lines-fill me-2"></i>Issued Memorandums
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-3">
+                    <div class="table-responsive border rounded">
+                        <table class="table table-sm table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Office</th>
+                                    <th>Issued Memo</th>
+                                    <th>Offense</th>
+                                    <th>Consequence</th>
+                                    <th>Status</th>
+                                    <th>Date</th>
+                                </tr>
+                            </thead>
+                            <tbody id="employeeMemoHistoryBody">
+                                <tr><td colspan="6" class="text-center py-4 text-muted">No memorandums found.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="issuedMemoDetailModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="issuedMemoDetailTitle">Issued Memorandum</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-2 small text-muted" id="issuedMemoDetailMeta"></p>
+                    <p class="mb-2"><strong>Consequence:</strong> <span id="issuedMemoDetailConsequence"></span></p>
+                    <hr />
+                    <div class="small border rounded bg-light p-3" style="white-space: pre-wrap;" id="issuedMemoDetailLetter">No letter content available for this memorandum.</div>
+
+                    <div class="memo-signature-block">
+                        <div class="memo-signature-line">
+                            <div class="memo-signature-name" id="issuedMemoDetailEmployee"></div>
+                        </div>
+                        <div class="memo-signature-role" id="issuedMemoDetailRole">Employee</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="printIssuedMemoBtn">
+                        <i class="bi bi-printer me-1"></i> Print Memo
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <section id="printMemoSheet" aria-hidden="true"></section>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
     <script>
       document.addEventListener('DOMContentLoaded', function () {
@@ -485,6 +677,7 @@ try {
             }
             return $carry;
         }, []), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+        const memoHistoryByUser = <?= json_encode($memoHistoryByUser, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 
         const editButtons = document.querySelectorAll('.js-edit-policy-btn');
         editButtons.forEach(function (btn) {
@@ -505,6 +698,124 @@ try {
               setVal('edit_offense_' + i + '_days', policy['offense_' + i + '_days']);
             }
           });
+        });
+
+        const historyTitle = document.getElementById('employeeMemoHistoryTitle');
+        const historyBody = document.getElementById('employeeMemoHistoryBody');
+        const historyButtons = document.querySelectorAll('.js-employee-memo-history-btn');
+        const issuedMemoDetailModalEl = document.getElementById('issuedMemoDetailModal');
+        const issuedMemoDetailModal = issuedMemoDetailModalEl ? new bootstrap.Modal(issuedMemoDetailModalEl) : null;
+        const issuedMemoDetailTitle = document.getElementById('issuedMemoDetailTitle');
+        const issuedMemoDetailMeta = document.getElementById('issuedMemoDetailMeta');
+        const issuedMemoDetailConsequence = document.getElementById('issuedMemoDetailConsequence');
+        const issuedMemoDetailLetter = document.getElementById('issuedMemoDetailLetter');
+        const issuedMemoDetailEmployee = document.getElementById('issuedMemoDetailEmployee');
+        const printIssuedMemoBtn = document.getElementById('printIssuedMemoBtn');
+        const printMemoSheet = document.getElementById('printMemoSheet');
+        let selectedHistoryEmployeeName = '';
+        const esc = (str) => String(str ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+        const formatDate = (value) => {
+          if (!value) return '—';
+          const d = new Date(value);
+          if (Number.isNaN(d.getTime())) return '—';
+          return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        };
+
+        historyButtons.forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            const userId = Number(btn.getAttribute('data-user-id') || '0');
+            const employeeName = btn.getAttribute('data-employee-name') || ('Employee #' + userId);
+            selectedHistoryEmployeeName = employeeName;
+            if (historyTitle) {
+              historyTitle.innerHTML = '<i class="bi bi-person-lines-fill me-2"></i>Issued Memorandums: ' + esc(employeeName);
+            }
+            if (!historyBody) return;
+
+            const rows = memoHistoryByUser[userId] || [];
+            if (!rows.length) {
+              historyBody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">No memorandums found for this employee.</td></tr>';
+              return;
+            }
+
+            historyBody.innerHTML = rows.map(function (memo, memoIndex) {
+              const isSuspension = (memo.consequence_type || '') === 'suspension';
+              const suspensionHtml = isSuspension
+                ? '<div class="text-primary" style="font-size: 0.7rem;"><i class="bi bi-calendar-x"></i> ' + Number(memo.suspension_days || 0) + ' days (' + esc(memo.suspension_start || '') + ' to ' + esc(memo.suspension_end || '') + ')</div>'
+                : '';
+              const status = String(memo.status || 'resolved');
+              const badgeClass = status === 'active' ? 'bg-danger' : 'bg-success';
+              const memoLabel = (memo.violation_code || '') + ((memo.violation_name || '') ? (' - ' + memo.violation_name) : '');
+              return '<tr>'
+                + '<td><span class="badge bg-secondary opacity-75">' + esc(memo.office_name || 'General') + '</span></td>'
+                + '<td><button type="button" class="btn btn-link p-0 text-start text-decoration-none js-issued-memo-btn" data-user-id="' + userId + '" data-memo-index="' + memoIndex + '">' + esc(memoLabel) + '</button></td>'
+                + '<td>#' + Number(memo.offense_number || 0) + '</td>'
+                + '<td><div class="small fw-semibold">' + esc(memo.consequence || '') + '</div>' + suspensionHtml + '</td>'
+                + '<td><span class="badge ' + badgeClass + '">' + esc(status.charAt(0).toUpperCase() + status.slice(1)) + '</span></td>'
+                + '<td class="small text-muted">' + esc(formatDate(memo.created_at || '')) + '</td>'
+                + '</tr>';
+            }).join('');
+          });
+        });
+
+        if (historyBody) {
+          historyBody.addEventListener('click', function (event) {
+            const trigger = event.target.closest('.js-issued-memo-btn');
+            if (!trigger) return;
+
+            const userId = Number(trigger.getAttribute('data-user-id') || '0');
+            const memoIndex = Number(trigger.getAttribute('data-memo-index') || '-1');
+            const rows = memoHistoryByUser[userId] || [];
+            const memo = rows[memoIndex];
+            if (!memo) return;
+
+            const memoTitle = (memo.violation_code || 'Memo') + ((memo.violation_name || '') ? (' - ' + memo.violation_name) : '');
+            if (issuedMemoDetailTitle) issuedMemoDetailTitle.textContent = memoTitle;
+            if (issuedMemoDetailMeta) {
+              issuedMemoDetailMeta.textContent = 'Issued: ' + formatDate(memo.created_at || '') + ' | Offense #' + Number(memo.offense_number || 0);
+            }
+            if (issuedMemoDetailConsequence) issuedMemoDetailConsequence.textContent = memo.consequence || '—';
+            if (issuedMemoDetailLetter) {
+              issuedMemoDetailLetter.textContent = (memo.memo_notes || '').trim() !== ''
+                ? String(memo.memo_notes)
+                : 'No letter content available for this memorandum.';
+            }
+            if (issuedMemoDetailEmployee) issuedMemoDetailEmployee.textContent = selectedHistoryEmployeeName || ('Employee #' + userId);
+
+            if (issuedMemoDetailModal) issuedMemoDetailModal.show();
+          });
+        }
+
+        if (printIssuedMemoBtn) {
+          printIssuedMemoBtn.addEventListener('click', function () {
+            if (!printMemoSheet) return;
+            const title = issuedMemoDetailTitle ? issuedMemoDetailTitle.textContent || 'Issued Memorandum' : 'Issued Memorandum';
+            const meta = issuedMemoDetailMeta ? issuedMemoDetailMeta.textContent || '' : '';
+            const consequence = issuedMemoDetailConsequence ? issuedMemoDetailConsequence.textContent || '—' : '—';
+            const letter = issuedMemoDetailLetter ? issuedMemoDetailLetter.textContent || 'No letter content available for this memorandum.' : 'No letter content available for this memorandum.';
+            const employee = issuedMemoDetailEmployee ? issuedMemoDetailEmployee.textContent || '' : '';
+
+            printMemoSheet.innerHTML = ''
+              + '<h1 class="print-title">' + esc(title) + '</h1>'
+              + '<p class="print-meta">' + esc(meta) + '</p>'
+              + '<div><strong>Consequence:</strong> ' + esc(consequence) + '</div>'
+              + '<hr>'
+              + '<div class="print-letter">' + esc(letter) + '</div>'
+              + '<div class="print-sign-wrap"><div class="print-sign-line">' + esc(employee) + '</div><div class="print-sign-role">Employee</div></div>';
+
+            document.body.classList.add('printing-memo');
+            window.setTimeout(function () {
+              window.print();
+            }, 50);
+          });
+        }
+
+        window.addEventListener('afterprint', function () {
+          document.body.classList.remove('printing-memo');
         });
       });
     </script>

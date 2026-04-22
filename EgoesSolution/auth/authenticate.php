@@ -29,6 +29,30 @@ if (!$user || !password_verify($password, $user['password_hash'])) {
     exit;
 }
 
+// Safety block: terminated employees cannot log in.
+if (($user['role'] ?? '') === 'employee') {
+    try {
+        $terminationStmt = $pdo->prepare(
+            "SELECT id
+             FROM employee_memos
+             WHERE user_id = ?
+               AND consequence_type = 'termination'
+               AND status = 'active'
+             ORDER BY id DESC
+             LIMIT 1"
+        );
+        $terminationStmt->execute([(int) $user['id']]);
+        $hasActiveTermination = (bool) $terminationStmt->fetchColumn();
+        if ($hasActiveTermination) {
+            $_SESSION['login_error'] = 'Your account has been terminated. Please contact HR.';
+            header('Location: login.php');
+            exit;
+        }
+    } catch (Throwable $e) {
+        // If lookup fails, continue with existing auth behavior.
+    }
+}
+
 // Login OK
 $displayName = (string) ($user['full_name'] ?? 'User');
 try {

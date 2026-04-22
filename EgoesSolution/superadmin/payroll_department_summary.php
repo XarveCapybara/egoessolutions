@@ -329,7 +329,7 @@ foreach ($employees as $e) {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>E-GOES Solutions</title>
+    <title>Department Payroll Summary</title>
     <link rel="stylesheet" href="../assets/css/payslip-print.css?v=20" />
     <style>
       .eg-toolbar-btn {
@@ -425,9 +425,14 @@ foreach ($employees as $e) {
   <body class="eg-payslip-body">
     <div class="eg-payslip-toolbar d-flex flex-wrap align-items-center gap-2">
       <a href="#" class="eg-toolbar-btn eg-toolbar-btn--primary" onclick="window.print(); return false;">Print</a>
-
+      <a class="eg-toolbar-btn eg-toolbar-btn--secondary" href="payroll.php?<?= htmlspecialchars(http_build_query([
+          'period' => $period,
+          'week' => $weekStartStr,
+          'month' => $monthPicked->format('Y-m'),
+          'office_id' => $officeFilter,
+      ]), ENT_QUOTES, 'UTF-8') ?>">Back to payroll</a>
       <label style="font-family: Arial, sans-serif; font-size: 13px; margin-left: 8px;">
-        <input type="checkbox" id="dsShowDeductions"<?= $showDeductions ? ' checked' : '' ?> />
+        <input type="checkbox" id="dsShowDeductions" checked />
         Show deductions on summary
       </label>
       <span style="font-family: Arial, sans-serif; font-size: 12px; color: #555;">Uncheck to set configurable deductions to 0.00 (late/attendance still applied).</span>

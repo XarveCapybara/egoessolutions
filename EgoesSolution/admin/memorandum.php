@@ -322,7 +322,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $error === null) {
                             $memoStatus,
                         ]);
 
-                        $_SESSION['memo_flash_message'] = 'Memorandum issued successfully.';
+                        if ($consequenceType === 'termination') {
+                            $deactivateStmt = $pdo->prepare("UPDATE users SET is_active = 0 WHERE id = ? AND role = 'employee'");
+                            $deactivateStmt->execute([$targetUserId]);
+                            $_SESSION['memo_flash_message'] = 'Termination memo issued and employee login has been disabled.';
+                        } else {
+                            $_SESSION['memo_flash_message'] = 'Memorandum issued successfully.';
+                        }
                         eg_memo_redirect_self();
                     }
                 }
@@ -334,9 +340,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $error === null) {
         $memoId = (int) ($_POST['memo_id'] ?? 0);
         if ($memoId > 0) {
             try {
+                $memoLookupStmt = $pdo->prepare('SELECT user_id, consequence_type FROM employee_memos WHERE id = ? AND office_id = ? LIMIT 1');
+                $memoLookupStmt->execute([$memoId, $officeId]);
+                $memoRow = $memoLookupStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+
                 $resolveStmt = $pdo->prepare('UPDATE employee_memos SET status = "resolved" WHERE id = ? AND office_id = ?');
                 $resolveStmt->execute([$memoId, $officeId]);
+
                 $_SESSION['memo_flash_message'] = 'Memo status updated.';
+                if ($memoRow && (($memoRow['consequence_type'] ?? '') === 'termination')) {
+                    $targetUserId = (int) ($memoRow['user_id'] ?? 0);
+                    if ($targetUserId > 0) {
+                        $activeTerminationStmt = $pdo->prepare(
+                            "SELECT COUNT(*)
+                             FROM employee_memos
+                             WHERE user_id = ?
+                               AND consequence_type = 'termination'
+                               AND status = 'active'"
+                        );
+                        $activeTerminationStmt->execute([$targetUserId]);
+                        $activeTerminationCount = (int) $activeTerminationStmt->fetchColumn();
+
+                        if ($activeTerminationCount === 0) {
+                            $reactivateStmt = $pdo->prepare("UPDATE users SET is_active = 1 WHERE id = ? AND role = 'employee'");
+                            $reactivateStmt->execute([$targetUserId]);
+                            $_SESSION['memo_flash_message'] = 'Termination resolved and employee login has been re-enabled.';
+                        }
+                    }
+                }
                 eg_memo_redirect_self();
             } catch (Throwable $e) {
                 $error = 'Unable to update memo status.';

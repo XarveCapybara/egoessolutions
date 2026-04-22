@@ -301,14 +301,16 @@ usort($officeRows, static function (array $a, array $b): int {
         margin-bottom: 18px;
       }
       .sign-line {
-        border-bottom: 1px solid #1f2937;
-        min-height: 34px;
-        display: flex;
-        align-items: flex-end;
-        justify-content: center;
-        padding-bottom: 4px;
+        border-top: 1px solid #1f2937;
+        height: 1px;
+        width: 260px;
+        margin: 20px auto 0;
+      }
+      .sign-name {
+        text-align: center;
         font-size: 13px;
         font-weight: 700;
+        margin-top: 4px;
       }
       .sign-role {
         text-align: center;
@@ -390,12 +392,14 @@ usort($officeRows, static function (array $a, array $b): int {
       <div class="sign-area">
         <div>
           <div class="sign-label">Prepared by:</div>
-          <div class="sign-line">ANNA MARIE VILLANUEVA</div>
+          <div class="sign-line"></div>
+          <div class="sign-name">ANNA MARIE VILLANUEVA</div>
           <div class="sign-role">(HR Head)</div>
         </div>
         <div>
           <div class="sign-label">Approved by:</div>
-          <div class="sign-line">REGIN MATA</div>
+          <div class="sign-line"></div>
+          <div class="sign-name">REGIN MATA</div>
           <div class="sign-role">(Chief Executive Officer)</div>
         </div>
       </div>
