@@ -19,7 +19,7 @@ if (strpos($username, '@') === false) {
     $loginEmail = $map[strtolower($username)] ?? $username;
 }
 
-$stmt = $pdo->prepare('SELECT id, office_id, role, full_name, email, password_hash FROM users WHERE email = :email AND is_active = 1 LIMIT 1');
+$stmt = $pdo->prepare('SELECT id, office_id, role, full_name, email, password_hash, is_active FROM users WHERE email = :email LIMIT 1');
 $stmt->execute([':email' => $loginEmail]);
 $user = $stmt->fetch();
 
@@ -44,13 +44,19 @@ if (($user['role'] ?? '') === 'employee') {
         $terminationStmt->execute([(int) $user['id']]);
         $hasActiveTermination = (bool) $terminationStmt->fetchColumn();
         if ($hasActiveTermination) {
-            $_SESSION['login_error'] = 'Your account has been terminated. Please contact HR.';
+            $_SESSION['login_error'] = 'Terminated account.';
             header('Location: login.php');
             exit;
         }
     } catch (Throwable $e) {
         // If lookup fails, continue with existing auth behavior.
     }
+}
+
+if ((int) ($user['is_active'] ?? 1) !== 1) {
+    $_SESSION['login_error'] = 'Account is inactive.';
+    header('Location: login.php');
+    exit;
 }
 
 // Login OK

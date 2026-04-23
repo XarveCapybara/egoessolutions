@@ -131,6 +131,7 @@ try {
 $defaultHourly = 0.0;
 $deductionPerMinute = 0.0;
 $configurableDeductionsPerEmployee = 0.0;
+$payrollDeductionLines = [];
 if ($hasAppSettingsTable) {
     $rateStmt = $pdo->prepare('SELECT setting_value FROM app_settings WHERE setting_key = ? LIMIT 1');
     $rateStmt->execute(['hourly_rate_default']);
@@ -147,8 +148,10 @@ if ($hasAppSettingsTable) {
 }
 try {
     eg_ensure_payroll_deduction_types($pdo);
+    $payrollDeductionLines = $pdo->query('SELECT label, default_amount FROM payroll_deduction_types ORDER BY id ASC')->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $configurableDeductionsPerEmployee = (float) $pdo->query('SELECT COALESCE(SUM(default_amount), 0) FROM payroll_deduction_types')->fetchColumn();
 } catch (Throwable $e) {
+    $payrollDeductionLines = [];
     $configurableDeductionsPerEmployee = 0.0;
 }
 
@@ -157,6 +160,8 @@ $employeeDetailsMap = [];
 $totalGross = 0.0;
 $totalDeductions = 0.0;
 $totalNet = 0.0;
+$totalTardinessDeductions = 0.0;
+$totalCashAdvanceDeductions = 0.0;
 
 if ($hasAttendanceLogs && $hasEmployeesTable) {
     $hasDeductionAmountColumn = $pdo->query("SHOW COLUMNS FROM attendance_logs LIKE 'deduction_amount'")->rowCount() > 0;
@@ -227,6 +232,7 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
             $rowDeduction = max(0, $lateMinutes) * $deductionPerMinute;
         }
         $byEmployee[$eid]['deductions'] += $rowDeduction;
+        $totalTardinessDeductions += $rowDeduction;
 
 
 
@@ -282,6 +288,7 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
             }
             $byEmployee[$eid]['deductions'] += $amt;
             $byEmployee[$eid]['loan_deduction'] += $amt;
+            $totalCashAdvanceDeductions += $amt;
         }
     }
 
@@ -408,6 +415,7 @@ foreach ($payrollRows as $pr) {
     }
 }
 $isMonthPeriod = ($period === 'month');
+$deductionListCollapseId = 'deductionListCollapse';
 $payrollDetailRowsHtmlJson = json_encode(
     (object) $payrollDetailRowsHtmlById,
     JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT
@@ -548,8 +556,50 @@ $payslipEmployeeIdList = implode(',', array_map(function ($pr) {
             </div>
             <div class="col-md-3">
               <div class="eg-metric-card">
-                <div class="text-muted small"><?= $isMonthPeriod ? 'Monthly deductions' : 'Weekly deductions' ?></div>
+                <div class="d-flex align-items-center justify-content-between gap-2">
+                  <div class="text-muted small"><?= $isMonthPeriod ? 'Monthly deductions' : 'Weekly deductions' ?></div>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-secondary py-0 px-2 js-deduction-collapse-toggle"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#<?= $deductionListCollapseId ?>"
+                    aria-expanded="false"
+                    aria-controls="<?= $deductionListCollapseId ?>"
+                    title="Show deduction list"
+                  >
+                    <i class="bi bi-chevron-down"></i>
+                  </button>
+                </div>
                 <div class="fw-bold fs-4"><?= number_format($totalDeductions, 2) ?></div>
+                <div class="collapse mt-2" id="<?= $deductionListCollapseId ?>">
+                  <?php if (!empty($payrollDeductionLines) || $totalTardinessDeductions > 0 || $totalCashAdvanceDeductions > 0): ?>
+                    <ul class="list-unstyled small mb-0">
+                      <li class="d-flex justify-content-between align-items-center py-1">
+                        <span class="text-muted">Tardiness deduction</span>
+                        <span class="fw-semibold"><?= number_format($totalTardinessDeductions, 2) ?></span>
+                      </li>
+                      <li class="d-flex justify-content-between align-items-center py-1">
+                        <span class="text-muted">Cash advance deduction</span>
+                        <span class="fw-semibold"><?= number_format($totalCashAdvanceDeductions, 2) ?></span>
+                      </li>
+                      <?php foreach ($payrollDeductionLines as $line): ?>
+                        <?php
+                        $lineBaseAmount = (float) ($line['default_amount'] ?? 0);
+                        $lineContributingTotal = $showDeductions ? ($lineBaseAmount * $employeeCount) : 0.0;
+                        ?>
+                        <li class="d-flex justify-content-between align-items-center py-1">
+                          <span class="text-muted"><?= htmlspecialchars((string) ($line['label'] ?? ''), ENT_QUOTES, 'UTF-8') ?></span>
+                          <span class="fw-semibold"><?= number_format($lineContributingTotal, 2) ?></span>
+                        </li>
+                      <?php endforeach; ?>
+                    </ul>
+                    <div class="small text-muted mt-1">
+                      Based on <?= (int) $employeeCount ?> employee<?= $employeeCount === 1 ? '' : 's' ?> in this payroll.
+                    </div>
+                  <?php else: ?>
+                    <div class="small text-muted">No deduction lines configured.</div>
+                  <?php endif; ?>
+                </div>
               </div>
             </div>
             <div class="col-md-3">
@@ -582,7 +632,7 @@ $payslipEmployeeIdList = implode(',', array_map(function ($pr) {
             <?php elseif (empty($payrollRows)): ?>
               <p class="text-muted small mb-0">No attendance in this period for the selected filter. Try another week, month, or office.</p>
             <?php else: ?>
-              <div class="table-responsive">
+              <div class="table-responsive d-none d-md-block">
                 <table class="table table-sm table-hover align-middle mb-0" style="table-layout: fixed; width: 100%;">
                   <colgroup>
                     <col style="width: 18%;" />
@@ -668,6 +718,64 @@ $payslipEmployeeIdList = implode(',', array_map(function ($pr) {
                     <?php endforeach; ?>
                   </tbody>
                 </table>
+              </div>
+
+              <div class="d-md-none">
+                <?php foreach ($payrollRows as $pr): ?>
+                  <?php $recv = ($pr['receipt_status'] ?? 'pending') === 'received'; ?>
+                  <div class="border rounded p-2 mb-2 bg-white">
+                    <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
+                      <button
+                        type="button"
+                        class="btn btn-link p-0 text-start text-decoration-none fw-semibold js-open-payroll-detail"
+                        data-employee-id="<?= (int) $pr['employee_id'] ?>"
+                        data-employee-name="<?= htmlspecialchars($pr['full_name'], ENT_QUOTES, 'UTF-8') ?>"
+                        data-office="<?= htmlspecialchars($pr['office_name'], ENT_QUOTES, 'UTF-8') ?>"
+                        data-hourly-rate="<?= number_format((float) $pr['hourly_rate'], 2, '.', '') ?>"
+                        data-hours="<?= number_format((float) $pr['hours'], 2, '.', '') ?>"
+                        data-gross="<?= number_format((float) $pr['gross'], 2, '.', '') ?>"
+                        data-deductions="<?= number_format((float) $pr['deductions'], 2, '.', '') ?>"
+                        data-net="<?= number_format((float) $pr['net'], 2, '.', '') ?>"
+                      >
+                        <?= htmlspecialchars($pr['full_name']) ?>
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary js-open-payslip-modal"
+                        data-payslip-url="payslip_print.php?<?= htmlspecialchars(http_build_query([
+                            'employee_id' => (int) $pr['employee_id'],
+                            'period' => $period,
+                            'week' => $weekStartStr,
+                            'month' => $monthValueForInput,
+                            'office_id' => $officeFilter,
+                            'employees' => $payslipEmployeeIdList,
+                            'show_deductions' => $showDeductions ? '1' : '0',
+                        ]), ENT_QUOTES, 'UTF-8') ?>"
+                        title="Print payslip"
+                        aria-label="Print payslip for <?= htmlspecialchars($pr['full_name'], ENT_QUOTES, 'UTF-8') ?>"
+                      ><i class="bi bi-printer"></i></button>
+                    </div>
+                    <div class="small text-muted mb-2"><?= htmlspecialchars($pr['office_name']) ?></div>
+                    <div class="small">
+                      <div class="d-flex justify-content-between"><span class="text-muted">Rate</span><span><?= number_format($pr['hourly_rate'], 2) ?></span></div>
+                      <div class="d-flex justify-content-between"><span class="text-muted">Hours</span><span><?= number_format($pr['hours'], 2) ?></span></div>
+                      <div class="d-flex justify-content-between"><span class="text-muted">Gross</span><span><?= number_format($pr['gross'], 2) ?></span></div>
+                      <div class="d-flex justify-content-between"><span class="text-muted">Deductions</span><span><?= number_format($pr['deductions'], 2) ?></span></div>
+                      <div class="d-flex justify-content-between fw-semibold"><span>Net Pay</span><span><?= number_format($pr['net'], 2) ?></span></div>
+                    </div>
+                    <form method="post" action="save_payroll_receipt.php" class="mt-2">
+                      <input type="hidden" name="period_type" value="<?= htmlspecialchars($period) ?>" />
+                      <input type="hidden" name="week" value="<?= htmlspecialchars($weekStartStr) ?>" />
+                      <input type="hidden" name="month" value="<?= htmlspecialchars($monthValueForInput) ?>" />
+                      <input type="hidden" name="office_id" value="<?= (int) $officeFilter ?>" />
+                      <input type="hidden" name="employee_id" value="<?= (int) $pr['employee_id'] ?>" />
+                      <select name="status" class="form-select form-select-sm" aria-label="Receipt status for <?= htmlspecialchars($pr['full_name']) ?>" onchange="this.form.submit()">
+                        <option value="pending" <?= !$recv ? ' selected' : '' ?>>Pending</option>
+                        <option value="received" <?= $recv ? ' selected' : '' ?>>Received</option>
+                      </select>
+                    </form>
+                  </div>
+                <?php endforeach; ?>
               </div>
             <?php endif; ?>
           </div>
@@ -785,6 +893,24 @@ $payslipEmployeeIdList = implode(',', array_map(function ($pr) {
 
         periodSelect.addEventListener('change', syncPeriodUi);
         syncPeriodUi();
+      })();
+
+      (function () {
+        var collapseEl = document.getElementById(<?= json_encode($deductionListCollapseId, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>);
+        var toggleBtn = document.querySelector('.js-deduction-collapse-toggle');
+        if (!collapseEl || !toggleBtn) return;
+        var icon = toggleBtn.querySelector('i');
+
+        function syncIcon(isOpen) {
+          if (!icon) return;
+          icon.classList.toggle('bi-chevron-down', !isOpen);
+          icon.classList.toggle('bi-chevron-up', isOpen);
+          toggleBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        }
+
+        collapseEl.addEventListener('shown.bs.collapse', function () { syncIcon(true); });
+        collapseEl.addEventListener('hidden.bs.collapse', function () { syncIcon(false); });
+        syncIcon(collapseEl.classList.contains('show'));
       })();
 
       (function () {

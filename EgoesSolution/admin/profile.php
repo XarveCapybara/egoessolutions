@@ -60,7 +60,6 @@ $isModal = isset($_GET['modal']) && $_GET['modal'] === '1';
 $editMode = isset($_GET['edit']) && $_GET['edit'] === '1';
 $profileBaseUrl = $isModal ? 'profile.php?modal=1' : 'profile.php';
 $profileEditUrl = $isModal ? 'profile.php?modal=1&edit=1#edit-profile' : 'profile.php?edit=1#edit-profile';
-$passwordPanelOpen = false;
 
 try {
     $pdo->exec('
@@ -227,37 +226,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['display_name'] = $p['nickname'] !== '' ? $p['nickname'] : $finalDisplayName;
                 header('Location: ' . ($isModal ? 'profile.php?modal=1&saved=1' : 'profile.php?saved=1'));
                 exit;
-            }
-        }
-    } elseif ($action === 'update_password') {
-        $passwordPanelOpen = true;
-        $currentPassword = trim($_POST['current_password'] ?? '');
-        $newPassword = trim($_POST['new_password'] ?? '');
-        $confirmPassword = trim($_POST['confirm_password'] ?? '');
-
-        if ($currentPassword === '' || $newPassword === '' || $confirmPassword === '') {
-            $error = 'Please complete all password fields.';
-        } elseif (strlen($newPassword) < 8) {
-            $error = 'New password must be at least 8 characters.';
-        } elseif ($newPassword !== $confirmPassword) {
-            $error = 'New password and confirmation do not match.';
-        } elseif ($userId <= 0) {
-            $error = 'Invalid user session. Please log in again.';
-        } else {
-            try {
-                $userStmt = $pdo->prepare('SELECT id, password_hash FROM users WHERE id = ? AND role = "admin" LIMIT 1');
-                $userStmt->execute([$userId]);
-                $row = $userStmt->fetch();
-                if (!$row || !password_verify($currentPassword, (string) $row['password_hash'])) {
-                    $error = 'Current password is incorrect.';
-                } else {
-                    $newHash = password_hash($newPassword, PASSWORD_DEFAULT);
-                    $updateStmt = $pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?');
-                    $updateStmt->execute([$newHash, $userId]);
-                    $message = 'Password updated successfully.';
-                }
-            } catch (PDOException $e) {
-                $error = 'Unable to update password. Please try again.';
             }
         }
     }
@@ -459,40 +427,6 @@ function eg_admin_disp(?string $s): string
                 <dd><?= htmlspecialchars(eg_admin_disp($profile['email'] ?? '')) ?></dd>
               </div>
             </dl>
-            <div class="eg-panel p-4 mt-3 mb-3 eg-change-password-panel">
-              <div class="d-flex align-items-center justify-content-between gap-2">
-                <h5 class="mb-0">Change Password</h5>
-                <button
-                  class="btn btn-outline-primary btn-sm"
-                  type="button"
-                  data-bs-toggle="collapse"
-                  data-bs-target="#changePasswordCollapse"
-                  aria-expanded="<?= $passwordPanelOpen ? 'true' : 'false' ?>"
-                  aria-controls="changePasswordCollapse">
-                  Change Password
-                </button>
-              </div>
-              <div class="collapse<?= $passwordPanelOpen ? ' show' : '' ?> mt-3" id="changePasswordCollapse">
-                <form method="post" class="row g-3">
-                  <input type="hidden" name="action" value="update_password" />
-                  <div class="col-md-4">
-                    <label for="current_password" class="form-label">Current Password</label>
-                    <input type="password" class="form-control" id="current_password" name="current_password" required />
-                  </div>
-                  <div class="col-md-4">
-                    <label for="new_password" class="form-label">New Password</label>
-                    <input type="password" class="form-control" id="new_password" name="new_password" minlength="8" required />
-                  </div>
-                  <div class="col-md-4">
-                    <label for="confirm_password" class="form-label">Confirm New Password</label>
-                    <input type="password" class="form-control" id="confirm_password" name="confirm_password" minlength="8" required />
-                  </div>
-                  <div class="col-12">
-                    <button type="submit" class="btn btn-primary">Update Password</button>
-                  </div>
-                </form>
-              </div>
-            </div>
             <hr class="eg-profile-ref-divider" />
             <h2 class="eg-profile-ref-section-title">Employee Barcode</h2>
             <?php if ($employeeCode !== ''): ?>

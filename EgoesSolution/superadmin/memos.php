@@ -146,7 +146,7 @@ try {
             u.full_name,
             COALESCE(o.name, 'General') AS office_name,
             COUNT(m.id) AS total_memos,
-            SUM(CASE WHEN m.status = 'active' THEN 1 ELSE 0 END) AS active_memos,
+            SUM(CASE WHEN LOWER(TRIM(COALESCE(m.status, ''))) IN ('active', 'unresolved') THEN 1 ELSE 0 END) AS active_memos,
             MAX(m.created_at) AS latest_memo_date
         FROM employee_memos m
         JOIN users u ON m.user_id = u.id
@@ -157,51 +157,16 @@ try {
     ")->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {}
 
-$memoHistoryByUser = [];
-try {
-    $memoHistoryRows = $pdo->query("
-        SELECT 
-            m.user_id,
-            COALESCE(o.name, 'General') AS office_name,
-            m.violation_code,
-            m.violation_name,
-            m.offense_number,
-            m.consequence,
-            m.consequence_type,
-            m.suspension_days,
-            m.suspension_start,
-            m.suspension_end,
-            m.status,
-            m.created_at,
-            m.memo_notes
-        FROM employee_memos m
-        LEFT JOIN offices o ON m.office_id = o.id
-        ORDER BY m.created_at DESC, m.id DESC
-    ")->fetchAll(PDO::FETCH_ASSOC);
-    foreach ($memoHistoryRows as $row) {
-        $userId = (int)($row['user_id'] ?? 0);
-        if ($userId <= 0) {
-            continue;
-        }
-        if (!isset($memoHistoryByUser[$userId])) {
-            $memoHistoryByUser[$userId] = [];
-        }
-        $memoHistoryByUser[$userId][] = [
-            'office_name' => (string)($row['office_name'] ?? 'General'),
-            'violation_code' => (string)($row['violation_code'] ?? ''),
-            'violation_name' => (string)($row['violation_name'] ?? ''),
-            'offense_number' => (int)($row['offense_number'] ?? 0),
-            'consequence' => (string)($row['consequence'] ?? ''),
-            'consequence_type' => (string)($row['consequence_type'] ?? ''),
-            'suspension_days' => (int)($row['suspension_days'] ?? 0),
-            'suspension_start' => (string)($row['suspension_start'] ?? ''),
-            'suspension_end' => (string)($row['suspension_end'] ?? ''),
-            'status' => (string)($row['status'] ?? ''),
-            'created_at' => (string)($row['created_at'] ?? ''),
-            'memo_notes' => (string)($row['memo_notes'] ?? ''),
-        ];
+$memoEmployeesMain = [];
+$memoEmployeesArchive = [];
+foreach ($memoEmployees as $employeeMemo) {
+    $activeMemos = (int) ($employeeMemo['active_memos'] ?? 0);
+    if ($activeMemos > 0) {
+        $memoEmployeesMain[] = $employeeMemo;
+    } else {
+        $memoEmployeesArchive[] = $employeeMemo;
     }
-} catch (PDOException $e) {}
+}
 
 ?>
 <!DOCTYPE html>
@@ -273,6 +238,21 @@ try {
                 font-weight: 700;
                 margin: 0 0 8px;
             }
+            body.printing-memo #printMemoSheet .print-brand {
+                text-align: center;
+                margin-bottom: 14px;
+            }
+            body.printing-memo #printMemoSheet .print-brand-name {
+                font-size: 18px;
+                font-weight: 800;
+                margin: 0;
+                letter-spacing: 0.4px;
+            }
+            body.printing-memo #printMemoSheet .print-brand-sub {
+                font-size: 12px;
+                color: #475569;
+                margin: 0;
+            }
             body.printing-memo #printMemoSheet .print-meta {
                 font-size: 12px;
                 color: #64748b;
@@ -329,44 +309,101 @@ try {
                 <!-- Global Issued Memos Oversight -->
                 <div class="eg-panel p-4 mb-4">
                     <h5 class="fw-bold mb-4"><i class="bi bi-journal-text me-2"></i>Global Issued Memos Oversight</h5>
-                    <div class="table-responsive">
-                        <table class="table table-sm table-hover align-middle mb-0">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>Employee</th>
-                                    <th>Office</th>
-                                    <th>Total Issued Memos</th>
-                                    <th>Active Memos</th>
-                                    <th>Latest Memorandum Date</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if (empty($memoEmployees)): ?>
-                                    <tr><td colspan="5" class="text-center py-4 text-muted">No employees with issued memorandums yet.</td></tr>
-                                <?php else: ?>
-                                    <?php foreach ($memoEmployees as $employeeMemo): ?>
+                    <ul class="nav nav-tabs mb-3" id="memoOversightTabs" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active" id="memo-main-tab" data-bs-toggle="tab" data-bs-target="#memo-main-pane" type="button" role="tab" aria-controls="memo-main-pane" aria-selected="true">
+                                Main <span class="badge bg-danger ms-1"><?= count($memoEmployeesMain) ?></span>
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="memo-archive-tab" data-bs-toggle="tab" data-bs-target="#memo-archive-pane" type="button" role="tab" aria-controls="memo-archive-pane" aria-selected="false">
+                                Archive <span class="badge bg-secondary ms-1"><?= count($memoEmployeesArchive) ?></span>
+                            </button>
+                        </li>
+                    </ul>
+                    <div class="tab-content" id="memoOversightTabsContent">
+                        <div class="tab-pane fade show active" id="memo-main-pane" role="tabpanel" aria-labelledby="memo-main-tab" tabindex="0">
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover align-middle mb-0">
+                                    <thead class="table-light">
                                         <tr>
-                                            <td>
-                                                <a href="#" class="fw-bold text-decoration-none js-employee-memo-history-btn"
-                                                   data-bs-toggle="modal"
-                                                   data-bs-target="#employeeMemoHistoryModal"
-                                                   data-user-id="<?= (int)$employeeMemo['user_id'] ?>"
-                                                   data-employee-name="<?= htmlspecialchars((string)$employeeMemo['full_name'], ENT_QUOTES, 'UTF-8') ?>"
-                                                   title="View employee memorandums">
-                                                    <?= htmlspecialchars($employeeMemo['full_name']) ?>
-                                                </a>
-                                            </td>
-                                            <td><span class="badge bg-secondary opacity-75"><?= htmlspecialchars($employeeMemo['office_name']) ?></span></td>
-                                            <td><span class="badge bg-primary-subtle text-primary-emphasis"><?= (int)$employeeMemo['total_memos'] ?></span></td>
-                                            <td><span class="badge <?= ((int)$employeeMemo['active_memos'] > 0) ? 'bg-danger' : 'bg-success' ?>"><?= (int)$employeeMemo['active_memos'] ?></span></td>
-                                            <td class="small text-muted">
-                                                <?= !empty($employeeMemo['latest_memo_date']) ? date('M j, Y', strtotime($employeeMemo['latest_memo_date'])) : '—' ?>
-                                            </td>
+                                            <th>Employee</th>
+                                            <th>Office</th>
+                                            <th>Total Issued Memos</th>
+                                            <th>Active / Unresolved</th>
+                                            <th>Latest Memorandum Date</th>
                                         </tr>
-                                    <?php endforeach; ?>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
+                                    </thead>
+                                    <tbody>
+                                        <?php if (empty($memoEmployeesMain)): ?>
+                                            <tr><td colspan="5" class="text-center py-4 text-muted">No employees with active or unresolved memorandums.</td></tr>
+                                        <?php else: ?>
+                                            <?php foreach ($memoEmployeesMain as $employeeMemo): ?>
+                                                <tr>
+                                                    <td>
+                                                        <a href="#" class="fw-bold text-decoration-none js-employee-memo-history-btn"
+                                                           data-bs-toggle="modal"
+                                                           data-bs-target="#employeeMemoHistoryModal"
+                                                           data-user-id="<?= (int)$employeeMemo['user_id'] ?>"
+                                                           data-employee-name="<?= htmlspecialchars((string)$employeeMemo['full_name'], ENT_QUOTES, 'UTF-8') ?>"
+                                                           title="View employee memorandums">
+                                                            <?= htmlspecialchars($employeeMemo['full_name']) ?>
+                                                        </a>
+                                                    </td>
+                                                    <td><span class="badge bg-secondary opacity-75"><?= htmlspecialchars($employeeMemo['office_name']) ?></span></td>
+                                                    <td><span class="badge bg-primary-subtle text-primary-emphasis"><?= (int)$employeeMemo['total_memos'] ?></span></td>
+                                                    <td><span class="badge bg-danger"><?= (int)$employeeMemo['active_memos'] ?></span></td>
+                                                    <td class="small text-muted">
+                                                        <?= !empty($employeeMemo['latest_memo_date']) ? date('M j, Y', strtotime($employeeMemo['latest_memo_date'])) : '—' ?>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="tab-pane fade" id="memo-archive-pane" role="tabpanel" aria-labelledby="memo-archive-tab" tabindex="0">
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover align-middle mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Employee</th>
+                                            <th>Office</th>
+                                            <th>Total Issued Memos</th>
+                                            <th>Active / Unresolved</th>
+                                            <th>Latest Memorandum Date</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php if (empty($memoEmployeesArchive)): ?>
+                                            <tr><td colspan="5" class="text-center py-4 text-muted">No archived employees yet.</td></tr>
+                                        <?php else: ?>
+                                            <?php foreach ($memoEmployeesArchive as $employeeMemo): ?>
+                                                <tr>
+                                                    <td>
+                                                        <a href="#" class="fw-bold text-decoration-none js-employee-memo-history-btn"
+                                                           data-bs-toggle="modal"
+                                                           data-bs-target="#employeeMemoHistoryModal"
+                                                           data-user-id="<?= (int)$employeeMemo['user_id'] ?>"
+                                                           data-employee-name="<?= htmlspecialchars((string)$employeeMemo['full_name'], ENT_QUOTES, 'UTF-8') ?>"
+                                                           title="View employee memorandums">
+                                                            <?= htmlspecialchars($employeeMemo['full_name']) ?>
+                                                        </a>
+                                                    </td>
+                                                    <td><span class="badge bg-secondary opacity-75"><?= htmlspecialchars($employeeMemo['office_name']) ?></span></td>
+                                                    <td><span class="badge bg-primary-subtle text-primary-emphasis"><?= (int)$employeeMemo['total_memos'] ?></span></td>
+                                                    <td><span class="badge bg-success"><?= (int)$employeeMemo['active_memos'] ?></span></td>
+                                                    <td class="small text-muted">
+                                                        <?= !empty($employeeMemo['latest_memo_date']) ? date('M j, Y', strtotime($employeeMemo['latest_memo_date'])) : '—' ?>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 
@@ -677,7 +714,7 @@ try {
             }
             return $carry;
         }, []), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
-        const memoHistoryByUser = <?= json_encode($memoHistoryByUser, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+        const memoHistoryCacheByUser = Object.create(null);
 
         const editButtons = document.querySelectorAll('.js-edit-policy-btn');
         editButtons.forEach(function (btn) {
@@ -726,8 +763,33 @@ try {
           return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
         };
 
+        const renderMemoRows = function (userId, rows) {
+          if (!historyBody) return;
+          if (!rows.length) {
+            historyBody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">No memorandums found for this employee.</td></tr>';
+            return;
+          }
+          historyBody.innerHTML = rows.map(function (memo, memoIndex) {
+            const isSuspension = (memo.consequence_type || '') === 'suspension';
+            const suspensionHtml = isSuspension
+              ? '<div class="text-primary" style="font-size: 0.7rem;"><i class="bi bi-calendar-x"></i> ' + Number(memo.suspension_days || 0) + ' days (' + esc(memo.suspension_start || '') + ' to ' + esc(memo.suspension_end || '') + ')</div>'
+              : '';
+            const status = String(memo.status || 'resolved');
+            const badgeClass = status === 'active' ? 'bg-danger' : 'bg-success';
+            const memoLabel = (memo.violation_code || '') + ((memo.violation_name || '') ? (' - ' + memo.violation_name) : '');
+            return '<tr>'
+              + '<td><span class="badge bg-secondary opacity-75">' + esc(memo.office_name || 'General') + '</span></td>'
+              + '<td><button type="button" class="btn btn-link p-0 text-start text-decoration-none js-issued-memo-btn" data-user-id="' + userId + '" data-memo-index="' + memoIndex + '">' + esc(memoLabel) + '</button></td>'
+              + '<td>#' + Number(memo.offense_number || 0) + '</td>'
+              + '<td><div class="small fw-semibold">' + esc(memo.consequence || '') + '</div>' + suspensionHtml + '</td>'
+              + '<td><span class="badge ' + badgeClass + '">' + esc(status.charAt(0).toUpperCase() + status.slice(1)) + '</span></td>'
+              + '<td class="small text-muted">' + esc(formatDate(memo.created_at || '')) + '</td>'
+              + '</tr>';
+          }).join('');
+        };
+
         historyButtons.forEach(function (btn) {
-          btn.addEventListener('click', function () {
+          btn.addEventListener('click', async function () {
             const userId = Number(btn.getAttribute('data-user-id') || '0');
             const employeeName = btn.getAttribute('data-employee-name') || ('Employee #' + userId);
             selectedHistoryEmployeeName = employeeName;
@@ -736,29 +798,27 @@ try {
             }
             if (!historyBody) return;
 
-            const rows = memoHistoryByUser[userId] || [];
-            if (!rows.length) {
-              historyBody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">No memorandums found for this employee.</td></tr>';
+            if (historyBody) {
+              historyBody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">Loading memorandums...</td></tr>';
+            }
+            if (memoHistoryCacheByUser[userId]) {
+              renderMemoRows(userId, memoHistoryCacheByUser[userId]);
               return;
             }
-
-            historyBody.innerHTML = rows.map(function (memo, memoIndex) {
-              const isSuspension = (memo.consequence_type || '') === 'suspension';
-              const suspensionHtml = isSuspension
-                ? '<div class="text-primary" style="font-size: 0.7rem;"><i class="bi bi-calendar-x"></i> ' + Number(memo.suspension_days || 0) + ' days (' + esc(memo.suspension_start || '') + ' to ' + esc(memo.suspension_end || '') + ')</div>'
-                : '';
-              const status = String(memo.status || 'resolved');
-              const badgeClass = status === 'active' ? 'bg-danger' : 'bg-success';
-              const memoLabel = (memo.violation_code || '') + ((memo.violation_name || '') ? (' - ' + memo.violation_name) : '');
-              return '<tr>'
-                + '<td><span class="badge bg-secondary opacity-75">' + esc(memo.office_name || 'General') + '</span></td>'
-                + '<td><button type="button" class="btn btn-link p-0 text-start text-decoration-none js-issued-memo-btn" data-user-id="' + userId + '" data-memo-index="' + memoIndex + '">' + esc(memoLabel) + '</button></td>'
-                + '<td>#' + Number(memo.offense_number || 0) + '</td>'
-                + '<td><div class="small fw-semibold">' + esc(memo.consequence || '') + '</div>' + suspensionHtml + '</td>'
-                + '<td><span class="badge ' + badgeClass + '">' + esc(status.charAt(0).toUpperCase() + status.slice(1)) + '</span></td>'
-                + '<td class="small text-muted">' + esc(formatDate(memo.created_at || '')) + '</td>'
-                + '</tr>';
-            }).join('');
+            try {
+              const resp = await fetch('memo_history_api.php?user_id=' + encodeURIComponent(String(userId)), {
+                headers: { 'Accept': 'application/json' },
+                credentials: 'same-origin',
+              });
+              const payload = await resp.json();
+              const rows = Array.isArray(payload.rows) ? payload.rows : [];
+              memoHistoryCacheByUser[userId] = rows;
+              renderMemoRows(userId, rows);
+            } catch (err) {
+              if (historyBody) {
+                historyBody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-danger">Unable to load memorandums right now.</td></tr>';
+              }
+            }
           });
         });
 
@@ -769,7 +829,7 @@ try {
 
             const userId = Number(trigger.getAttribute('data-user-id') || '0');
             const memoIndex = Number(trigger.getAttribute('data-memo-index') || '-1');
-            const rows = memoHistoryByUser[userId] || [];
+            const rows = memoHistoryCacheByUser[userId] || [];
             const memo = rows[memoIndex];
             if (!memo) return;
 
@@ -800,6 +860,10 @@ try {
             const employee = issuedMemoDetailEmployee ? issuedMemoDetailEmployee.textContent || '' : '';
 
             printMemoSheet.innerHTML = ''
+              + '<div class="print-brand">'
+              + '<p class="print-brand-name">E-GOES SOLUTIONS</p>'
+              + '<p class="print-brand-sub">Employee Memorandum</p>'
+              + '</div>'
               + '<h1 class="print-title">' + esc(title) + '</h1>'
               + '<p class="print-meta">' + esc(meta) + '</p>'
               + '<div><strong>Consequence:</strong> ' + esc(consequence) + '</div>'

@@ -7,6 +7,7 @@ if (($_SESSION['role'] ?? '') !== 'superadmin') {
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../includes/eg_worked_minutes.php';
+require_once __DIR__ . '/../includes/payroll_deduction_types.php';
 
 function eg_payroll_monday(DateTimeImmutable $d): DateTimeImmutable
 {
@@ -22,6 +23,23 @@ function eg_last_payroll_day_of_month(DateTimeImmutable $dateInMonth): DateTimeI
         $monthEnd = $monthEnd->modify('-' . ($weekday - 5) . ' days');
     }
     return $monthEnd;
+}
+
+function eg_cash_advance_week_range(string $advanceDate): ?array
+{
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $advanceDate)) {
+        return null;
+    }
+    $d = DateTimeImmutable::createFromFormat('Y-m-d', $advanceDate);
+    if (!$d) {
+        return null;
+    }
+    $weekStart = eg_payroll_monday($d->setTime(0, 0, 0));
+    $weekEnd = $weekStart->modify('+4 days');
+    return [
+        'start' => $weekStart->format('Y-m-d'),
+        'end' => $weekEnd->format('Y-m-d'),
+    ];
 }
 
 $period = trim((string) ($_GET['period'] ?? 'week'));
@@ -83,6 +101,9 @@ $hasDeductionAmountColumn = $hasAttendanceLogs && $pdo->query("SHOW COLUMNS FROM
 $hasLateMinutesColumn = $hasAttendanceLogs && $pdo->query("SHOW COLUMNS FROM attendance_logs LIKE 'late_minutes'")->rowCount() > 0;
 
 $defaultHourly = 0.0;
+$deductionPerMinute = 0.0;
+$configurableDeductionsPerEmployee = 0.0;
+$hasCashAdvancesTable = $pdo->query("SHOW TABLES LIKE 'cash_advances'")->rowCount() > 0;
 try {
     if ($pdo->query("SHOW TABLES LIKE 'app_settings'")->rowCount() > 0) {
         $rateStmt = $pdo->prepare('SELECT setting_value FROM app_settings WHERE setting_key = ? LIMIT 1');
@@ -91,9 +112,23 @@ try {
         if ($rv !== false && $rv !== null && is_numeric($rv)) {
             $defaultHourly = (float) $rv;
         }
+        $deductStmt = $pdo->prepare('SELECT setting_value FROM app_settings WHERE setting_key = ? LIMIT 1');
+        $deductStmt->execute(['deduction_per_minute']);
+        $dv = $deductStmt->fetchColumn();
+        if ($dv !== false && $dv !== null && is_numeric($dv)) {
+            $deductionPerMinute = (float) $dv;
+        }
     }
 } catch (Throwable $e) {
     $defaultHourly = 0.0;
+    $deductionPerMinute = 0.0;
+}
+
+try {
+    eg_ensure_payroll_deduction_types($pdo);
+    $configurableDeductionsPerEmployee = (float) $pdo->query('SELECT COALESCE(SUM(default_amount), 0) FROM payroll_deduction_types')->fetchColumn();
+} catch (Throwable $e) {
+    $configurableDeductionsPerEmployee = 0.0;
 }
 
 $officeRows = [];
@@ -133,6 +168,7 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $employeeOfficeAgg = [];
+    $employeePrimaryOfficeKey = [];
     foreach ($rows as $row) {
         $employeeId = (int) ($row['employee_id'] ?? 0);
         $officeId = (int) ($row['office_id'] ?? 0);
@@ -149,6 +185,7 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
                 'working_day_map' => [],
                 'deductions' => 0.0,
                 'hourly_rate' => 0.0,
+                'employee_id' => $employeeId,
             ];
             $ra = $row['rate_amount'] ?? null;
             if ($ra !== null && $ra !== '' && (float) $ra > 0) {
@@ -156,6 +193,9 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
             } else {
                 $employeeOfficeAgg[$key]['hourly_rate'] = $defaultHourly;
             }
+        }
+        if (!isset($employeePrimaryOfficeKey[$employeeId])) {
+            $employeePrimaryOfficeKey[$employeeId] = $key;
         }
 
         $ld = (string) ($row['log_date'] ?? '');
@@ -175,7 +215,62 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
                 $employeeOfficeAgg[$key]['working_days']++;
             }
         }
-        $employeeOfficeAgg[$key]['deductions'] += (float) ($row['deduction_amount'] ?? 0);
+        $rowDeduction = (float) ($row['deduction_amount'] ?? 0);
+        $lateMinutes = (int) ($row['late_minutes'] ?? 0);
+        if ($rowDeduction <= 0 && $deductionPerMinute > 0 && $hasLateMinutesColumn) {
+            $rowDeduction = max(0, $lateMinutes) * $deductionPerMinute;
+        }
+        $employeeOfficeAgg[$key]['deductions'] += $rowDeduction;
+    }
+
+    if ($hasCashAdvancesTable && !empty($employeePrimaryOfficeKey)) {
+        $employeeIds = array_values(array_unique(array_map('intval', array_keys($employeePrimaryOfficeKey))));
+        $placeholders = implode(',', array_fill(0, count($employeeIds), '?'));
+        $loanStmt = $pdo->prepare("
+            SELECT employee_id, amount, advance_date, status
+            FROM cash_advances
+            WHERE employee_id IN ({$placeholders})
+            ORDER BY advance_date, id
+        ");
+        $loanStmt->execute($employeeIds);
+        $loanRows = $loanStmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($loanRows as $lr) {
+            if ((string) ($lr['status'] ?? '') !== 'deducted') {
+                continue;
+            }
+            $employeeId = (int) ($lr['employee_id'] ?? 0);
+            $officeKey = $employeePrimaryOfficeKey[$employeeId] ?? null;
+            if ($officeKey === null || !isset($employeeOfficeAgg[$officeKey])) {
+                continue;
+            }
+            $isDueThisPeriod = false;
+            if ($period === 'week') {
+                $targetWeek = eg_cash_advance_week_range((string) ($lr['advance_date'] ?? ''));
+                $isDueThisPeriod = $targetWeek
+                    && $targetWeek['start'] === $rangeStart
+                    && $targetWeek['end'] === $rangeEnd;
+            } else {
+                $ad = (string) ($lr['advance_date'] ?? '');
+                $isDueThisPeriod = $ad !== '' && $ad >= $rangeStart && $ad <= $rangeEnd;
+            }
+            if (!$isDueThisPeriod) {
+                continue;
+            }
+            $amt = (float) ($lr['amount'] ?? 0);
+            if ($amt <= 0) {
+                continue;
+            }
+            $employeeOfficeAgg[$officeKey]['deductions'] += $amt;
+        }
+    }
+
+    if ($showDeductions && $configurableDeductionsPerEmployee > 0 && !empty($employeePrimaryOfficeKey)) {
+        foreach ($employeePrimaryOfficeKey as $employeeId => $officeKey) {
+            if (!isset($employeeOfficeAgg[$officeKey])) {
+                continue;
+            }
+            $employeeOfficeAgg[$officeKey]['deductions'] += $configurableDeductionsPerEmployee;
+        }
     }
 
     $officeAgg = [];
