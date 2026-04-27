@@ -6,6 +6,7 @@ if (($_SESSION['role'] ?? '') !== 'admin') {
 }
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/eg_suspension_weekdays.php';
 
 $name = $_SESSION['display_name'] ?? 'Admin';
 $adminUserId = (int) ($_SESSION['user_id'] ?? 0);
@@ -278,8 +279,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $error === null) {
                             }
                             $today = new DateTimeImmutable('today');
                             $suspDays = $days;
-                            $suspStart = $today->format('Y-m-d');
-                            $suspEnd = $today->modify('+' . ($days - 1) . ' day')->format('Y-m-d');
+                            $workStart = eg_next_weekday_on_or_after($today);
+                            $suspStart = $workStart->format('Y-m-d');
+                            $suspEnd = eg_add_weekdays($today, $days)->format('Y-m-d');
                             $memoStatus = 'active';
                         } elseif ($consequenceType === 'termination') {
                             $memoStatus = 'active';

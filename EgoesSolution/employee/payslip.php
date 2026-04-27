@@ -6,6 +6,7 @@ if (($_SESSION['role'] ?? '') !== 'employee') {
 }
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/eg_employee_suspension_guard.php';
 require_once __DIR__ . '/../includes/payroll_deduction_types.php';
 require_once __DIR__ . '/../includes/eg_worked_minutes.php';
 

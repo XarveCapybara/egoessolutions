@@ -5,6 +5,8 @@ if (($_SESSION['role'] ?? '') !== 'employee') {
     header('Location: ../auth/login.php');
     exit;
 }
+require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/eg_employee_suspension_guard.php';
 $name = $_SESSION['display_name'] ?? 'Employee';
 ?>
 <!DOCTYPE html>

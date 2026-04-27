@@ -5,6 +5,7 @@ if (($_SESSION['role'] ?? '') !== 'admin') {
     exit;
 }
 $name = $_SESSION['display_name'] ?? 'Admin';
+$adminUserId = (int) ($_SESSION['user_id'] ?? 0);
 $officeId = $_SESSION['office_id'] ?? null;
 $designatedOfficeName = 'Unassigned';
 $designatedOfficeAddress = '';
@@ -78,8 +79,13 @@ if ($officeId) {
         }
     }
 
-    $stmt = $pdo->prepare('SELECT COUNT(*) FROM users WHERE role = "employee" AND office_id = ?');
-    $stmt->execute([$officeId]);
+    $stmt = $pdo->prepare(
+        'SELECT COUNT(*) FROM users u
+         INNER JOIN employees e ON e.user_id = u.id
+         WHERE u.office_id = ? AND u.is_active = 1
+           AND (u.role = "employee" OR (u.role = "admin" AND u.id = ?))'
+    );
+    $stmt->execute([$officeId, $adminUserId]);
     $totalEmployees = (int) $stmt->fetchColumn();
 
     $hasAttendanceLogs = $pdo->query("SHOW TABLES LIKE 'attendance_logs'")->rowCount() > 0;
@@ -146,10 +152,11 @@ if ($officeId) {
                 ON al.employee_id = e.id
                 AND al.office_id = u.office_id
                 AND al.log_date = ?
-            WHERE u.role = "employee" AND u.office_id = ? AND u.is_active = 1
+            WHERE u.office_id = ? AND u.is_active = 1
+              AND (u.role = "employee" OR (u.role = "admin" AND u.id = ?))
             ORDER BY u.full_name
         ');
-        $statusStmt->execute([$effectiveWorkdayDate, $officeId]);
+        $statusStmt->execute([$effectiveWorkdayDate, $officeId, $adminUserId]);
         $employeeStatusRows = $statusStmt->fetchAll();
         foreach ($employeeStatusRows as $row) {
             $statusLabel = 'Absent';

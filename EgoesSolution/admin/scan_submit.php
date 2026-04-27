@@ -12,6 +12,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
 }
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/eg_suspension_weekdays.php';
 
 $adminOfficeId = (int) ($_SESSION['office_id'] ?? 0);
 $barcodeId = trim($_POST['barcode_id'] ?? '');
@@ -63,6 +64,20 @@ try {
         if ($officeSchedule) {
             $officeTimeIn = $officeSchedule['time_in'] ?? null;
             $officeTimeOut = $officeSchedule['time_out'] ?? null;
+        }
+    }
+
+    $now = new DateTimeImmutable('now');
+    if ($clientNowRaw !== '') {
+        try {
+            $parsedNow = DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $clientNowRaw);
+            if ($parsedNow instanceof DateTimeImmutable) {
+                $now = $parsedNow;
+            } else {
+                $now = new DateTimeImmutable($clientNowRaw);
+            }
+        } catch (Exception $e) {
+            // Fallback to server time when client timestamp is invalid.
         }
     }
 
@@ -138,10 +153,9 @@ try {
                     exit;
                 }
                 if ($consequenceType === 'suspension') {
-                    $today = (new DateTimeImmutable('today'))->format('Y-m-d');
                     $sStart = (string) ($discipline['suspension_start'] ?? '');
                     $sEnd = (string) ($discipline['suspension_end'] ?? '');
-                    if ($sStart !== '' && $sEnd !== '' && $today >= $sStart && $today <= $sEnd) {
+                    if (eg_is_workday_in_suspension_range($now, $sStart, $sEnd)) {
                         $_SESSION['scan_status'] = 'error';
                         $_SESSION['scan_message'] = $employee['full_name'] . ' is suspended and cannot be scanned until ' . date('M d, Y', strtotime($sEnd)) . '.';
                         header('Location: scan.php');
@@ -152,20 +166,6 @@ try {
         }
     }
 
-    $now = new DateTimeImmutable('now');
-    if ($clientNowRaw !== '') {
-        try {
-            // Expect local wall-clock format from browser: YYYY-MM-DD HH:MM:SS
-            $parsedNow = DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $clientNowRaw);
-            if ($parsedNow instanceof DateTimeImmutable) {
-                $now = $parsedNow;
-            } else {
-                $now = new DateTimeImmutable($clientNowRaw);
-            }
-        } catch (Exception $e) {
-            // Fallback to server time when client timestamp is invalid.
-        }
-    }
     $nowSql = $now->format('Y-m-d H:i:s');
     $effectiveLogDate = $now->format('Y-m-d');
     $isGraveyardShift = false;

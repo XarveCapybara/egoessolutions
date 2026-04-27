@@ -6,6 +6,7 @@ if (($_SESSION['role'] ?? '') !== 'employee') {
 }
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/eg_employee_suspension_guard.php';
 
 $userId = (int) ($_SESSION['user_id'] ?? 0);
 

@@ -9,6 +9,8 @@ $userId = (int) ($_SESSION['user_id'] ?? 0);
 $officeId = (int) ($_SESSION['office_id'] ?? 0);
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/eg_suspension_weekdays.php';
+require_once __DIR__ . '/../includes/eg_employee_suspension_guard.php';
 
 if ($userId > 0) {
     $officeFromUser = $pdo->prepare('SELECT office_id FROM users WHERE id = ? LIMIT 1');
@@ -247,6 +249,9 @@ if ($hasEmployeeMemosTable && $userId > 0) {
                 $rangeEnd = $monthEnd;
             }
             for ($d = $rangeStart; $d <= $rangeEnd; $d = $d->modify('+1 day')) {
+                if (!eg_is_workday_in_suspension_range($d, (string) ($sr['suspension_start'] ?? ''), (string) ($sr['suspension_end'] ?? ''))) {
+                    continue;
+                }
                 $key = $d->format('Y-m-d');
                 $suspendedDates[$key] = [
                     'start' => $rangeStart->format('Y-m-d'),
@@ -267,11 +272,16 @@ for ($day = 1; $day <= $daysInMonth; $day++) {
     $dateObj = $monthStart->setDate((int) $monthStart->format('Y'), (int) $monthStart->format('m'), $day);
     $dateKey = $dateObj->format('Y-m-d');
     $dayAttendance = $attendanceByDate[$dateKey] ?? null;
+    $isoDow = (int) $dateObj->format('N');
+    $isWeekend = $isoDow > 5;
     $status = null;
     $statusClass = '';
     if (isset($suspendedDates[$dateKey])) {
         $status = 'Suspended';
         $statusClass = 'eg-dot-yellow';
+    } elseif ($isWeekend) {
+        $status = 'Rest Day';
+        $statusClass = '';
     } elseif ($dateObj <= $today) {
         if (!empty($dayAttendance) && !empty($dayAttendance['time_in'])) {
             $timeInOnly = date('H:i:s', strtotime((string) $dayAttendance['time_in']));
@@ -298,6 +308,7 @@ for ($day = 1; $day <= $daysInMonth; $day++) {
         'date' => $dateKey,
         'date_label' => $dateObj->format('M j, Y'),
         'status' => $status ?? ($dateObj > $today ? 'Future' : 'Absent'),
+        'is_weekend' => $isWeekend,
         'suspension_start' => $suspendedDates[$dateKey]['start'] ?? null,
         'suspension_end' => $suspendedDates[$dateKey]['end'] ?? null,
         'time_in' => $dayAttendance['time_in'] ?? null,
