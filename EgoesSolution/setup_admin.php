@@ -6,6 +6,12 @@
 
 require_once __DIR__ . '/config/database.php';
 
+$appEnv = strtolower((string) (getenv('APP_ENV') ?: 'development'));
+if (in_array($appEnv, ['prod', 'production'], true)) {
+    http_response_code(403);
+    exit('Forbidden in production.');
+}
+
 $users = [
     ['email' => 'superadmin@egoes.com', 'password' => 'Password123!', 'fullName' => 'Super Admin', 'role' => 'superadmin', 'office_id' => null],
     ['email' => 'admin@egoes.com', 'password' => 'Password123!', 'fullName' => 'Office Admin', 'role' => 'admin', 'office_id' => 1],

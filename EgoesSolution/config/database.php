@@ -1,10 +1,27 @@
 <?php
 
 // Central PDO connection for EgoesSolution.
-// Uses environment variables first, with local-dev fallbacks.
+// Uses environment variables first.
 date_default_timezone_set('Asia/Manila');
 
-$appEnv = strtolower((string) (getenv('APP_ENV') ?: 'development'));
+if (!function_exists('eg_env')) {
+    function eg_env(string $key, string $default = ''): string
+    {
+        $v = getenv($key);
+        if ($v !== false && $v !== null && $v !== '') {
+            return (string) $v;
+        }
+        if (isset($_SERVER[$key]) && $_SERVER[$key] !== '') {
+            return (string) $_SERVER[$key];
+        }
+        if (isset($_ENV[$key]) && $_ENV[$key] !== '') {
+            return (string) $_ENV[$key];
+        }
+        return $default;
+    }
+}
+
+$appEnv = strtolower(eg_env('APP_ENV', 'development'));
 $isProduction = in_array($appEnv, ['prod', 'production'], true);
 
 // Environment-aware PHP error policy.
@@ -18,11 +35,36 @@ if ($isProduction) {
     error_reporting(E_ALL);
 }
 
-$dbHost = (string) (getenv('DB_HOST') ?: '127.0.0.1');
-$dbPort = (string) (getenv('DB_PORT') ?: '3306');
-$dbName = (string) (getenv('DB_NAME') ?: 'egoessolution');
-$dbUser = (string) (getenv('DB_USER') ?: 'root');
-$dbPass = (string) (getenv('DB_PASS') ?: 'fieryblaze1');
+$dbHost = eg_env('DB_HOST', '127.0.0.1');
+$dbPort = eg_env('DB_PORT', '3306');
+$dbName = eg_env('DB_NAME', 'egoessolution');
+$dbUser = eg_env('DB_USER', 'root');
+$dbPass = eg_env('DB_PASS', '');
+
+if ($dbPass === '') {
+    error_log('Missing DB_PASS environment value.');
+    http_response_code(500);
+    if ($isProduction) {
+        echo 'Service temporarily unavailable.';
+    } else {
+        echo 'Database connection failed. Missing DB_PASS in .htaccess/env.';
+    }
+    exit;
+}
+
+if ($isProduction) {
+    $missingVars = [];
+    if (eg_env('DB_HOST', '') === '') $missingVars[] = 'DB_HOST';
+    if (eg_env('DB_NAME', '') === '') $missingVars[] = 'DB_NAME';
+    if (eg_env('DB_USER', '') === '') $missingVars[] = 'DB_USER';
+    if (eg_env('DB_PASS', '') === '') $missingVars[] = 'DB_PASS';
+    if (!empty($missingVars)) {
+        error_log('Missing required production DB env vars: ' . implode(', ', $missingVars));
+        http_response_code(500);
+        echo 'Service temporarily unavailable.';
+        exit;
+    }
+}
 
 $dsn = "mysql:host={$dbHost};port={$dbPort};dbname={$dbName};charset=utf8mb4";
 

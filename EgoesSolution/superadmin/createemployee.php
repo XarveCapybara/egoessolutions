@@ -85,6 +85,22 @@ try {
     ');
     $upsertProfileStmt->execute([$userId, $firstName, $lastName]);
 
+    // Ensure employee record exists with code format E-00000.
+    $employeeCode = 'E-' . str_pad((string) $userId, 5, '0', STR_PAD_LEFT);
+    $hasEmployeesTable = $pdo->query("SHOW TABLES LIKE 'employees'")->rowCount() > 0;
+    if ($hasEmployeesTable) {
+        $employeeExistsStmt = $pdo->prepare('SELECT id FROM employees WHERE user_id = ? LIMIT 1');
+        $employeeExistsStmt->execute([$userId]);
+        $employeeId = (int) ($employeeExistsStmt->fetchColumn() ?: 0);
+        if ($employeeId > 0) {
+            $employeeUpdateStmt = $pdo->prepare('UPDATE employees SET employee_code = ? WHERE id = ?');
+            $employeeUpdateStmt->execute([$employeeCode, $employeeId]);
+        } else {
+            $employeeInsertStmt = $pdo->prepare('INSERT INTO employees (user_id, employee_code) VALUES (?, ?)');
+            $employeeInsertStmt->execute([$userId, $employeeCode]);
+        }
+    }
+
     $pdo->commit();
 
     $_SESSION['employee_create_status'] = 'success';
