@@ -1,5 +1,6 @@
 <?php
 session_start();
+require_once __DIR__ . '/../includes/csrf.php';
 
 $wantsJson = isset($_SERVER['HTTP_X_REQUESTED_WITH'])
     && strtolower((string) $_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest';
@@ -24,6 +25,17 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
     if ($wantsJson) {
         assign_json_exit(false, 'Method not allowed.', 405);
     }
+    header('Location: offices.php');
+    exit;
+}
+
+$csrfToken = $_POST['csrf_token'] ?? null;
+if (!eg_csrf_validate(is_string($csrfToken) ? $csrfToken : null)) {
+    if ($wantsJson) {
+        assign_json_exit(false, 'Security token mismatch. Refresh the page and try again.', 419);
+    }
+    $_SESSION['office_assign_status'] = 'error';
+    $_SESSION['office_assign_message'] = 'Security token mismatch. Please refresh and try again.';
     header('Location: offices.php');
     exit;
 }

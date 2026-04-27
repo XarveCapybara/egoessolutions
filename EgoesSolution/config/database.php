@@ -1,14 +1,28 @@
 <?php
 
 // Central PDO connection for EgoesSolution.
-// Adjust $dbName, $dbUser, $dbPass to match your MySQL setup.
+// Uses environment variables first, with local-dev fallbacks.
 date_default_timezone_set('Asia/Manila');
 
-$dbHost = '127.0.0.1';
-$dbPort = '3306';
-$dbName = 'egoessolution';
-$dbUser = 'root';
-$dbPass = ''; // if your root user has a password, put it here
+$appEnv = strtolower((string) (getenv('APP_ENV') ?: 'development'));
+$isProduction = in_array($appEnv, ['prod', 'production'], true);
+
+// Environment-aware PHP error policy.
+if ($isProduction) {
+    ini_set('display_errors', '0');
+    ini_set('log_errors', '1');
+    error_reporting(E_ALL & ~E_DEPRECATED & ~E_STRICT);
+} else {
+    ini_set('display_errors', '1');
+    ini_set('log_errors', '1');
+    error_reporting(E_ALL);
+}
+
+$dbHost = (string) (getenv('DB_HOST') ?: '127.0.0.1');
+$dbPort = (string) (getenv('DB_PORT') ?: '3306');
+$dbName = (string) (getenv('DB_NAME') ?: 'egoessolution');
+$dbUser = (string) (getenv('DB_USER') ?: 'root');
+$dbPass = (string) (getenv('DB_PASS') ?: 'fieryblaze1');
 
 $dsn = "mysql:host={$dbHost};port={$dbPort};dbname={$dbName};charset=utf8mb4";
 
@@ -20,7 +34,14 @@ try {
     // Keep DB date/time functions aligned with PH time.
     $pdo->exec("SET time_zone = '+08:00'");
 } catch (PDOException $e) {
-    // For now, just stop the script. Later you can log this instead.
-    die('Database connection failed.');
+    // Never expose DB details to users in production.
+    error_log('Database connection failed: ' . $e->getMessage());
+    if ($isProduction) {
+        http_response_code(500);
+        echo 'Service temporarily unavailable.';
+        exit;
+    }
+    echo 'Database connection failed. Check your DB config.';
+    exit;
 }
 

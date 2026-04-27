@@ -227,4 +227,13 @@ if (count($parts) > 1) {
       }
     });
   })();
+
+  (function () {
+    window.addEventListener('storage', function (event) {
+      if (!event || event.key !== 'eg_logged_out_at') return;
+      var path = window.location.pathname.toLowerCase();
+      if (path.indexOf('/auth/login.php') !== -1 || path.endsWith('/index.php')) return;
+      window.location.href = '../auth/login.php';
+    });
+  })();
 </script>

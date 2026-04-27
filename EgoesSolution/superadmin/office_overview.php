@@ -7,6 +7,8 @@ if (($_SESSION['role'] ?? '') !== 'superadmin') {
 $name = $_SESSION['display_name'] ?? 'Super Admin';
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/csrf.php';
+$csrfToken = eg_csrf_token();
 
 $officeId = (int) ($_GET['id'] ?? 0);
 if ($officeId <= 0) {
@@ -290,6 +292,7 @@ if ($hasAttendanceLogs && $hasEmployeesTable) {
                           <form action="assign_employee_office.php" method="post" class="d-inline js-assign-employee-form">
                             <input type="hidden" name="office_id" value="<?= (int) $office['id'] ?>" />
                             <input type="hidden" name="employee_user_id" value="<?= (int) $candidate['id'] ?>" />
+                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>" />
                             <button type="submit" class="btn btn-sm btn-outline-primary">Add to This Office</button>
                           </form>
                         </td>

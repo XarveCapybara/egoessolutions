@@ -1,5 +1,19 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/session_bootstrap.php';
+eg_session_start();
+if (!empty($_SESSION['role'])) {
+    switch ((string) $_SESSION['role']) {
+        case 'superadmin':
+            header('Location: ../superadmin/dashboard.php');
+            exit;
+        case 'admin':
+            header('Location: ../admin/dashboard.php');
+            exit;
+        case 'employee':
+            header('Location: ../employee/dashboard.php');
+            exit;
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">

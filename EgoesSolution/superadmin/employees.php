@@ -7,6 +7,8 @@ if (($_SESSION['role'] ?? '') !== 'superadmin') {
 $name = $_SESSION['display_name'] ?? 'Super Admin';
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/csrf.php';
+$csrfToken = eg_csrf_token();
 $hasPositionCol = $pdo->query("SHOW COLUMNS FROM employees LIKE 'position'")->rowCount() > 0;
 $positionSelect = $hasPositionCol ? ', e.position' : '';
 $selectedOfficeId = (int) ($_GET['office_id'] ?? 0);
@@ -311,6 +313,7 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
 
             <form id="formChangePassword" action="update_user_password.php" method="post" class="border rounded p-3">
               <input type="hidden" name="user_id" id="passwordModalUserId" value="" />
+              <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>" />
               <h6 class="fw-bold mb-2"><i class="bi bi-key me-1"></i> Change Password</h6>
               <div class="mb-3">
                 <label for="new_password" class="form-label">New Password</label>
@@ -328,6 +331,7 @@ unset($_SESSION['role_update_status'], $_SESSION['role_update_message']);
 
             <form id="formChangeRole" action="update_user_role.php" method="post" class="border rounded p-3 mt-3">
               <input type="hidden" name="user_id" id="roleModalUserId" value="" />
+              <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>" />
               <h6 class="fw-bold mb-2"><i class="bi bi-person-badge me-1"></i> Change Role</h6>
               <div class="mb-2">
                 <label for="roleModalSelect" class="form-label">Role</label>

@@ -60,8 +60,8 @@ if ($pdo->query("SHOW TABLES LIKE 'employees'")->rowCount()) {
               <div class="col-12 col-md-4 col-lg-3">
                 <label for="js-barcode-filter-office" class="form-label small text-muted mb-1">Office</label>
                 <select id="js-barcode-filter-office" class="form-select form-select-sm">
-                <option value="0">All offices</option>
-                <option value="-1" selected>Unassigned</option>  <!-- add "selected" here -->
+                <option value="0" selected>All offices</option>
+                <option value="-1">Unassigned</option>
                 <?php foreach ($offices as $o): ?>
                   <option value="<?= (int) $o['id'] ?>"><?= htmlspecialchars((string) $o['name']) ?></option>
                 <?php endforeach; ?>
@@ -172,15 +172,18 @@ if ($pdo->query("SHOW TABLES LIKE 'employees'")->rowCount()) {
         const roleSel = document.getElementById('js-barcode-filter-role');
         const searchInp = document.getElementById('js-barcode-filter-search');
         const clearBtn = document.getElementById('js-barcode-filter-clear');
-        const body = document.getElementById('barcodeTableBody');
+        const tableBody = document.getElementById('barcodeTableBody');
         const noMatches = document.getElementById('barcodeNoMatches');
+        const rows = tableBody ? Array.from(tableBody.querySelectorAll('tr.js-barcode-row')) : [];
+        let filterTicking = false;
+
         function applyBarcodeFilters() {
-          if (!officeSel || !roleSel || !searchInp || !body) return;
+          if (!officeSel || !roleSel || !searchInp || !tableBody) return;
           const office = String(officeSel.value || '0');
           const role = String(roleSel.value || '');
           const q = String(searchInp.value || '').trim().toLowerCase();
           let visible = 0;
-          body.querySelectorAll('tr.js-barcode-row').forEach(function (tr) {
+          rows.forEach(function (tr) {
             const oid = String(tr.getAttribute('data-office-id') || '0');
             const r = String(tr.getAttribute('data-role') || 'employee');
             const hay = String(tr.getAttribute('data-search') || '');
@@ -191,17 +194,25 @@ if ($pdo->query("SHOW TABLES LIKE 'employees'")->rowCount()) {
             tr.classList.toggle('d-none', !show);
             if (show) visible++;
           });
-          if (noMatches) noMatches.classList.toggle('d-none', visible > 0 || q === '' && office === '0' && role === '');
+          if (noMatches) noMatches.classList.toggle('d-none', visible > 0);
         }
-        if (officeSel) officeSel.addEventListener('change', applyBarcodeFilters);
-        if (roleSel) roleSel.addEventListener('change', applyBarcodeFilters);
-        if (searchInp) searchInp.addEventListener('input', applyBarcodeFilters);
+        function scheduleFilterApply() {
+          if (filterTicking) return;
+          filterTicking = true;
+          window.requestAnimationFrame(function () {
+            filterTicking = false;
+            applyBarcodeFilters();
+          });
+        }
+        if (officeSel) officeSel.addEventListener('change', scheduleFilterApply);
+        if (roleSel) roleSel.addEventListener('change', scheduleFilterApply);
+        if (searchInp) searchInp.addEventListener('input', scheduleFilterApply);
         if (clearBtn) {
           clearBtn.addEventListener('click', function () {
             if (officeSel) officeSel.value = '0';
             if (roleSel) roleSel.value = '';
             if (searchInp) searchInp.value = '';
-            applyBarcodeFilters();
+            scheduleFilterApply();
           });
         }
         applyBarcodeFilters();

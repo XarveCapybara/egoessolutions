@@ -1,5 +1,6 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/session_bootstrap.php';
+eg_session_start();
 
 require_once __DIR__ . '/../config/database.php';
 
@@ -79,6 +80,7 @@ $_SESSION['display_name'] = $displayName;
 $_SESSION['user_id'] = $user['id'];
 $_SESSION['user_email'] = $user['email'];
 $_SESSION['office_id'] = $user['office_id'];
+eg_session_login_regenerate();
 
 switch ($user['role']) {
     case 'superadmin':
